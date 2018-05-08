@@ -1,9 +1,14 @@
-# The 6TiSCH Simulator - [![Build Status](https://openwsn-builder.paris.inria.fr/buildStatus/icon?job=6TiSCH%20Simulator/master)](https://openwsn-builder.paris.inria.fr/job/6TiSCH%20Simulator/job/master/)
+# The 6TiSCH Simulator
+
+Branch    | Build Status
+--------- | -------------
+`master`  | [![Build Status](https://openwsn-builder.paris.inria.fr/buildStatus/icon?job=6TiSCH%20Simulator/master)](https://openwsn-builder.paris.inria.fr/job/6TiSCH%20Simulator/job/master/)
+`develop` | [![Build Status](https://openwsn-builder.paris.inria.fr/buildStatus/icon?job=6TiSCH%20Simulator/develop)](https://openwsn-builder.paris.inria.fr/job/6TiSCH%20Simulator/job/develop/)
 
 Core Developers:
 
 * Mališa Vučinić (malisa.vucinic@inria.fr)
-* Yasuyuki Tanaka (yasuyuki.tanaka@inria.fr) - Sensei
+* Yasuyuki Tanaka (yasuyuki.tanaka@inria.fr)
 * Keoma Brun-Laguna (keoma.brun@inria.fr)
 * Thomas Watteyne (thomas.watteyne@inria.fr)
 
@@ -33,9 +38,9 @@ Simulated protocol stack
 | [draft-ietf-6tisch-6top-protocol-11](https://tools.ietf.org/html/draft-ietf-6tisch-6top-protocol-11)         | 6TiSCH 6top Protocol (6P)                |
 | [IEEE802.15.4-2015](https://ieeexplore.ieee.org/document/7460875/)                                           | IEEE802.15.4 TSCH                        |
 
-* propagation models
+* connectivity models
     * Pister-hack
-    * k7: trace-based propagation
+    * k7: trace-based connectivity
 * miscellaneous
     * Energy Consumption model taken from
         * [A Realistic Energy Consumption Model for TSCH Networks](http://ieeexplore.ieee.org/xpl/login.jsp?tp=&arnumber=6627960&url=http%3A%2F%2Fieeexplore.ieee.org%2Fiel7%2F7361%2F4427201%2F06627960.pdf%3Farnumber%3D6627960). Xavier Vilajosana, Qin Wang, Fabien Chraim, Thomas Watteyne, Tengfei Chang, Kris Pister. IEEE Sensors, Vol. 14, No. 2, February 2014.
@@ -66,18 +71,38 @@ Simulated protocol stack
     * raw charts are in `bin/simPlots/`.
 1. Take a look at `bin/config.json` to see the configuration of the simulations you just ran.
 
+The simulator can also run on a cluster system. Here is an example for a cluster built with OAR and Conda:
+
+1. Make sure `numCPUs` in `config.py` has `-1` (use all the available CPUs/cores) or a specific number of CPUs to be used
+1. Create a shell script, `runSim.sh`, having the following lines:
+    
+        #!/bin/sh
+        source activate py27
+        python runSim.py
+    
+1. Make the shell script file executable:
+   ```
+   $ chmod +x runSim.sh
+   ```
+1. Submit a task for your simulation (in this case, 2 CPUs which has 18 cores each will be used):
+   ```
+   $ oarsub -l /nodes=1/cpu=2/core=18 ./runSim.sh
+   ```
+
+Note that it is not supported to distribute simulation tasks over multiple hosts at this moment.
+
 ## Code Organization
 
 * `bin/`: the scripts for you to run
 * `example/`: example plots, shown in the documentation
 * `SimEngine/`: the simulator
     * `Mote.py`: Models a 6TiSCH mote running the different standards listed above.
-    * `Propagation.py`: Wireless propagation model.
+    * `Connectivity.py`: Simulates wireless connectivity.
     * `sf.py`: The scheduling function.
     * `SimConfig.py`: The overall configuration of running a simulation campaign.
     * `SimEngine.py`: Event-driven simulation engine at the core of this simulator.
     * `SimSettings.py`: The settings of a single simulation, part of a simulation campaign.
-    * `SimStats.py`: Periodically collects statistics and writes those to a file.
+    * `SimLog.py`: Used to save the simulation logs.
     * `Topology.py`: creates a topology of the motes in the network.
 * `SimGui/`: the graphical user interface to the simulator
 * `tests/`: the unit tests, run using `pytest`
