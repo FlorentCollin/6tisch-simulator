@@ -71,12 +71,15 @@ Simulated protocol stack
     * raw charts are in `bin/simPlots/`.
 1. Take a look at `bin/config.json` to see the configuration of the simulations you just ran.
 
-The simulator can also run on a cluster system. Here is an example for a cluster built with OAR and Conda:
+The simulator can be run on a cluster system. Here is an example for a cluster built with OAR and Conda:
 
-1. Make sure `numCPUs` in `config.py` has `-1` (use all the available CPUs/cores) or a specific number of CPUs to be used
+1. Edit `config.py
+    * Set `numCPUs` with `-1` (use all the available CPUs/cores) or a specific number of CPUs to be used
+    * Set `log_directory_name` with `"hostname"`
 1. Create a shell script, `runSim.sh`, having the following lines:
     
         #!/bin/sh
+        #OAR -l /nodes=1
         source activate py27
         python runSim.py
     
@@ -84,27 +87,27 @@ The simulator can also run on a cluster system. Here is an example for a cluster
    ```
    $ chmod +x runSim.sh
    ```
-1. Submit a task for your simulation (in this case, 2 CPUs which has 18 cores each will be used):
+1. Submit a task for your simulation (in this case, 10 separate simulation jobs are submitted):
    ```
-   $ oarsub -l /nodes=1/cpu=2/core=18 ./runSim.sh
+   $ oarsub --array 10  -S "./runSim.sh"
    ```
-
-Note that it is not supported to distribute simulation tasks over multiple hosts at this moment.
+1. After all the jobs finish, you'll have 10 log directories under `simData`, each directory name of which is the host name where a job is executed
+1. Merge the resulting log files into a single log directory:
+   ```
+   $ python mergeLogs.py
+   ```
 
 ## Code Organization
 
-* `bin/`: the scripts for you to run
-* `example/`: example plots, shown in the documentation
 * `SimEngine/`: the simulator
-    * `Mote.py`: Models a 6TiSCH mote running the different standards listed above.
     * `Connectivity.py`: Simulates wireless connectivity.
-    * `sf.py`: The scheduling function.
     * `SimConfig.py`: The overall configuration of running a simulation campaign.
     * `SimEngine.py`: Event-driven simulation engine at the core of this simulator.
-    * `SimSettings.py`: The settings of a single simulation, part of a simulation campaign.
     * `SimLog.py`: Used to save the simulation logs.
-    * `Topology.py`: creates a topology of the motes in the network.
-* `SimGui/`: the graphical user interface to the simulator
+    * `SimSettings.py`: The settings of a single simulation, part of a simulation campaign.    
+    * `Mote/`: Models a 6TiSCH mote running the different standards listed above.    
+* `bin/`: the scripts for you to run
+* `examples/`: example plots, shown in the documentation    
 * `tests/`: the unit tests, run using `pytest`
 * `traces/`: example `k7` connectivity traces
 
