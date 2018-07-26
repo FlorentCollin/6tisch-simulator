@@ -13,6 +13,7 @@ import json
 import glob
 
 from SimEngine import SimLog
+import SimEngine.Mote.MoteDefines as d
 
 # =========================== defines =========================================
 
@@ -66,7 +67,7 @@ def kpis_all(inputfile):
             allstats[run_id][mote_id]['sync_asn']  = asn
             allstats[run_id][mote_id]['sync_time_s'] = asn*file_settings['tsch_slotDuration']
 
-        elif logline['_type'] == SimLog.LOG_JOINED['type']:
+        elif logline['_type'] == SimLog.LOG_SECJOIN_JOINED['type']:
             # joined
 
             # shorthands
@@ -106,32 +107,13 @@ def kpis_all(inputfile):
 
             allstats[run_id][srcIp]['upstream_pkts'][appcounter]['tx_asn'] = tx_asn
 
-        elif logline['_type'] == SimLog.LOG_SIXLOWPAN_PKT_FWD['type']:
-            # packet transmission
-
-            # shorthands
-            pk_type    = logline['packet']['type']
-
-            # only consider DATA packets
-            if pk_type != 'DATA':
-                continue
-
-            srcIp      = logline['packet']['net']['srcIp']
-            dstIp      = logline['packet']['net']['dstIp']
-            appcounter = logline['packet']['app']['appcounter']
-
-            # only consider upstream packets
-            if dstIp != DAGROOT_IP:
-                continue
-
-            allstats[run_id][srcIp]['upstream_pkts'][appcounter]['hops'] += 1
-
         elif logline['_type'] == SimLog.LOG_APP_RX['type']:
             # packet reception
 
             # shorthands
             srcIp      = logline['packet']['net']['srcIp']
             dstIp      = logline['packet']['net']['dstIp']
+            hop_limit  = logline['packet']['net']['hop_limit']
             appcounter = logline['packet']['app']['appcounter']
             rx_asn     = logline['_asn']
 
@@ -139,7 +121,9 @@ def kpis_all(inputfile):
             if dstIp != DAGROOT_IP:
                 continue
 
-            allstats[run_id][srcIp]['upstream_pkts'][appcounter]['hops'] += 1
+            allstats[run_id][srcIp]['upstream_pkts'][appcounter]['hops']   = (
+                d.IPV6_DEFAULT_HOP_LIMIT - hop_limit + 1
+            )
             allstats[run_id][srcIp]['upstream_pkts'][appcounter]['rx_asn'] = rx_asn
 
         elif logline['_type'] == SimLog.LOG_PACKET_DROPPED['type']:
@@ -186,13 +170,22 @@ def kpis_all(inputfile):
         for (srcIp, motestats) in per_mote_stats.items():
             if srcIp != 0:
 
-                if 'sync_asn' in motestats:
-                    # ave_current, lifetime_AA
-                    motestats['ave_current_uA'] = motestats['charge']/float((motestats['charge_asn']-motestats['sync_asn']) * file_settings['tsch_slotDuration'])
-                    motestats['lifetime_AA_years'] = (2200*1000/float(motestats['ave_current_uA']))/(24.0*365)
-                else:
+                if   'sync_asn' not in motestats:
                     motestats['WARNING'] = "mote didn't sync"
-
+                elif 'charge_asn' not in motestats:
+                    motestats['WARNING'] = "log doesn't have battery info"
+                else:
+                    # avg_current, lifetime_AA
+                    if (
+                            (motestats['charge'] <= 0)
+                            or
+                            (motestats['charge_asn'] == motestats['sync_asn'])
+                        ):
+                        motestats['lifetime_AA_years'] = 'N/A'
+                    else:
+                        motestats['avg_current_uA'] = motestats['charge']/float((motestats['charge_asn']-motestats['sync_asn']) * file_settings['tsch_slotDuration'])
+                        assert motestats['avg_current_uA'] > 0
+                        motestats['lifetime_AA_years'] = (2200*1000/float(motestats['avg_current_uA']))/(24.0*365)
                 if 'join_asn' in motestats:
                     # latencies, upstream_num_tx, upstream_num_rx, upstream_num_lost
                     motestats['latencies']         = []
@@ -226,6 +219,7 @@ def kpis_all(inputfile):
         for (srcIp, motestats) in per_mote_stats.items():
             if 'sync_asn' in motestats:
                 del motestats['sync_asn']
+            if 'charge_asn' in motestats:
                 del motestats['charge_asn']
                 del motestats['charge']
             if 'join_asn' in motestats:

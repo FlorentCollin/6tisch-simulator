@@ -35,6 +35,7 @@ class Rpl(object):
         self.preferredParent           = None
         self.parentChildfromDAOs       = {}      # dictionary containing parents of each node
         self.iAmSendingDAOs            = False
+        self._tx_stat                  = {}      # indexed by mote_id
 
     #======================== public ==========================================
 
@@ -230,7 +231,7 @@ class Rpl(object):
         )
 
         # remove other possible DAOs from the queue
-        self.mote.tsch.removeTypeFromQueue(d.PKT_TYPE_DAO)
+        self.mote.tsch.remove_frame_from_tx_queue(type=d.PKT_TYPE_DAO)
 
         # send
         self.mote.sixlowpan.sendPacket(newDAO)
@@ -303,23 +304,29 @@ class Rpl(object):
             # next hop is the first item in the source route
             nextHopId = self.engine.motes[packet['net']['sourceRoute'].pop(0)].id
 
+        elif self.mote.dagRoot:
+            # downstream packet to neighbors of the root
+            # FIXME: this is a hack. We should maintain the IPv6 neighbor
+            # cache table for on-link determination not only by the root but
+            # also by other motes
+            nextHopId = packet['net']['dstIp']
+
         else:
-            # unicast upstream packet
-
-            if   self.mote.isNeighbor(packet['net']['dstIp']):
-                # packet to a neighbor
-
-                # next hop is that neighbor
-                nextHopId = packet['net']['dstIp']
-            elif packet['net']['dstIp'] == self.mote.dodagId:
-                # common upstream packet
-
-                # next hop is preferred parent (returns None if no preferred parent)
-                nextHopId = self.preferredParent
+            if packet['net']['dstIp'] == self.mote.dodagId:
+                # unicast upstream packet; send it to its preferred parent (default
+                # route)
+                if self.mote.dodagId is None:
+                    # this mote has not been part of RPL network yet; use
+                    # self.mote.tsch.join_proxy as its default route
+                    # FIXME: in such a situation, the mote should send only
+                    # link-local packets.
+                    nextHopId = self.mote.tsch.join_proxy
+                else:
+                    nextHopId = self.preferredParent
             else:
-                print self.mote.id
-                print packet
-                raise SystemError()
+                # unicast downstream packet; assume destination is on-link
+                # FIXME: need IPv6 neighbor cache table
+                nextHopId = packet['net']['dstIp']
 
         return nextHopId
 
@@ -343,55 +350,75 @@ class Rpl(object):
                 # I haven't received a DIO from that neighbor yet, so I don't know its rank (normal)
                 continue
             etx                        = self._estimateETX(nid)
-            if etx is None: # FIXME
-                etx = 9999
-            rank_increment             = (1*((3*etx)-2) + 0) * d.RPL_MINHOPRANKINCREASE # https://tools.ietf.org/html/rfc8180#section-5.1.1
+            # FIXME: use the formula in
+            # https://tools.ietf.org/html/rfc8180#section-5.1.1 with simply
+            # squaring ETX as https://arxiv.org/pdf/1710.02324.pdf suggested.
+            rank_increment             = (1*((3*(etx**2))-2) + 0) * d.RPL_MINHOPRANKINCREASE
             allPotentialRanks[nid]     = n['rank']+rank_increment
 
         # pick lowest potential rank
-        (myPotentialParent,myPotentialRank) = sorted(allPotentialRanks.iteritems(), key=lambda x: x[1])[0]
+        (myPotentialParent, myPotentialRank) = sorted(allPotentialRanks.iteritems(), key=lambda x: x[1])[0]
 
-        # switch parents
-        if self.rank!=myPotentialRank or self.preferredParent!=myPotentialParent:
-
-            # update
+        if (
+                (myPotentialRank is not None)
+                and
+                (myPotentialParent is not None)
+                and
+                (self.rank != myPotentialRank)
+            ):
+            # my rank changes; update states
+            old_parent           = self.preferredParent
             self.rank            = myPotentialRank
             self.preferredParent = myPotentialParent
 
-            # log
-            self.log(
-                SimEngine.SimLog.LOG_RPL_CHURN,
-                {
-                    "_mote_id":        self.mote.id,
-                    "rank":            self.rank,
-                    "preferredParent": self.preferredParent,
-                }
-            )
+            if self.preferredParent != old_parent:
+                # log
+                self.log(
+                    SimEngine.SimLog.LOG_RPL_CHURN,
+                    {
+                        "_mote_id":        self.mote.id,
+                        "rank":            self.rank,
+                        "preferredParent": self.preferredParent,
+                    }
+                )
+
+                # use the new parent as our clock source
+                self.mote.tsch.clock.sync(self.preferredParent)
+
+                # trigger 6P ADD if parent changed # FIXME: layer violation
+                self.mote.sf.indication_parent_change(old_parent, self.preferredParent)
+            else:
+                # my rank changes without parent switch
+                pass
 
     def _estimateETX(self, neighbor_id):
-
+        DEFAULT_ETX = 2
         assert type(neighbor_id)==int
 
-        # set initial values for numTx and numTxAck assuming PDR is exactly estimated
-        # FIXME
-        pdr                   = self.mote.getPDR(neighbor_id)
-        numTx                 = d.NUM_SUFFICIENT_TX
-        numTxAck              = math.floor(pdr*numTx)
+        if neighbor_id is not self._tx_stat:
+            self._tx_stat[neighbor_id] = {'numTx': 0, 'numTxAck': 0}
 
         for (_, cell) in self.mote.tsch.getSchedule().items():
             if  (
                     (cell['neighbor'] == neighbor_id)
                     and
                     (d.CELLOPTION_TX in cell['cellOptions'])
+                    and
+                    (d.CELLOPTION_SHARED not in cell['cellOptions'])
                 ):
-                numTx        += cell['numTx']
-                numTxAck     += cell['numTxAck']
+                self._tx_stat[neighbor_id]['numTx']    += cell['numTx']
+                self._tx_stat[neighbor_id]['numTxAck'] += cell['numTxAck']
+                cell['numTx']    = 0
+                cell['numTxAck'] = 0
 
         # abort if about to divide by 0
-        if not numTxAck:
-            return
-
-        # calculate ETX
-        etx = float(numTx)/float(numTxAck)
+        if self._tx_stat[neighbor_id]['numTxAck'] == 0:
+            etx = DEFAULT_ETX
+        else:
+            # calculate ETX
+            etx = float(
+                float(self._tx_stat[neighbor_id]['numTx']) /
+                float(self._tx_stat[neighbor_id]['numTxAck'])
+            )
 
         return etx

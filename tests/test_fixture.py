@@ -51,7 +51,7 @@ def test_exception_at_runtime(sim_engine, repeat4times):
         uniqueTag       = ('engine','_raiseException'),
         intraSlotOrder  = 1,
     )
-    
+
     with pytest.raises(MyException):
         u.run_until_asn(
             sim_engine,
@@ -80,7 +80,7 @@ def test_initial_scheduling_state(sim_engine):
         force_initial_routing_and_scheduling_state    = True
     )
 
-    # Each mote should have one TX/RX/SHRAED cell and one TX dedicated cell to
+    # Each mote should have one TX/RX/SHARED cell and one TX dedicated cell to
     # its parent. In this sense, a mote has the same number of RX dedicated
     # cells as its children. We'll have a linear topology with
     # force_initial_routing_and_scheduling_state True, each mote except for the
@@ -120,12 +120,79 @@ def test_run_until_asn(sim_engine, repeat4times):
             'exec_numSlotframesPerRun': 1,
         }
     )
-    
+
     assert sim_engine.getAsn() == 0
-    
+
     for target_asn in range(1,10,5):
         u.run_until_asn(
             sim_engine,
             target_asn = target_asn,
         )
         assert sim_engine.getAsn() == target_asn
+
+#=== test that run_until_end() works
+
+@pytest.fixture(params=[100, 200, 1000])
+def num_slotframes(request):
+    return request.param
+
+@pytest.fixture(params=[100, 101])
+def slotframe_length(request):
+    return request.param
+
+def test_run_until_end(sim_engine, num_slotframes, slotframe_length):
+    sim_engine = sim_engine(
+        diff_config = {
+            'exec_numSlotframesPerRun': num_slotframes,
+            'tsch_slotframeLength':     slotframe_length
+        }
+    )
+
+    u.run_until_end(sim_engine)
+
+    assert sim_engine.getAsn() == slotframe_length * num_slotframes
+
+#=== test that run_until_everyone_joined() works
+
+@pytest.fixture(params=[2, 5])
+def exec_num_motes(request):
+    return request.param
+
+@pytest.fixture(params=[True, False])
+def secjoin_enabled(request):
+    return request.param
+
+def test_run_until_everyone_joined(
+        sim_engine,
+        exec_num_motes,
+        secjoin_enabled
+    ):
+    sim_engine = sim_engine(
+        diff_config = {
+            'exec_numMotes'           : exec_num_motes,
+            'secjoin_enabled'         : secjoin_enabled,
+            'exec_numSlotframesPerRun': 10000,
+            'app_pkPeriod'            :  0,
+            'conn_class'              : 'Linear'
+        }
+    )
+
+    # everyone should have not been joined yet
+    assert (
+        len([m for m in sim_engine.motes if m.secjoin.getIsJoined() is False]) > 0
+    )
+
+    u.run_until_everyone_joined(sim_engine)
+
+    # everyone should have been joined
+    assert (
+        len([m for m in sim_engine.motes if m.secjoin.getIsJoined() is False]) == 0
+    )
+
+    # expect the simulator has the remaining time; that is, the simulator
+    # should not be paused by run_until_end() called inside of
+    # run_until_everyone_joined()
+    slotframe_length = sim_engine.settings.tsch_slotframeLength
+    num_slotframes   = sim_engine.settings.exec_numSlotframesPerRun
+    asn_at_end       = slotframe_length * num_slotframes
+    assert sim_engine.getAsn() < asn_at_end

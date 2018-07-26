@@ -7,9 +7,9 @@ Branch    | Build Status
 
 Core Developers:
 
-* Mališa Vučinić (malisa.vucinic@inria.fr)
 * Yasuyuki Tanaka (yasuyuki.tanaka@inria.fr)
 * Keoma Brun-Laguna (keoma.brun@inria.fr)
+* Mališa Vučinić (malisa.vucinic@inria.fr)
 * Thomas Watteyne (thomas.watteyne@inria.fr)
 
 Contributers:
@@ -19,6 +19,12 @@ Contributers:
 * Xavier Vilajosana (xvilajosana@eecs.berkeley.edu)
 * Esteban Municio (esteban.municio@uantwerpen.be)
 * Glenn Daneels (glenn.daneels@uantwerpen.be)
+
+## Publishing
+
+If you publish an academic paper using the results of the 6TiSCH Simulator, please cite:
+
+E. Municio, G. Daneels, M. Vucinic, S. Latre, J. Famaey, Y. Tanaka, K. Brun, K. Muraoka, X. Vilajosana, and T. Watteyne, "Simulating 6TiSCH Networks", Wiley Transactions on Emerging Telecommunications (ETT), 2018.
 
 ## Scope
 
@@ -73,7 +79,7 @@ Simulated protocol stack
 
 The simulator can be run on a cluster system. Here is an example for a cluster built with OAR and Conda:
 
-1. Edit `config.py
+1. Edit `config.json`
     * Set `numCPUs` with `-1` (use all the available CPUs/cores) or a specific number of CPUs to be used
     * Set `log_directory_name` with `"hostname"`
 1. Create a shell script, `runSim.sh`, having the following lines:
@@ -97,6 +103,32 @@ The simulator can be run on a cluster system. Here is an example for a cluster b
    $ python mergeLogs.py
    ```
 
+If you want to avoid using a specific host, use `-p` option with `oarsub`:
+```
+$ oarsub -p "not host like 'node063'" --array 10 -S "./runSim.sh"
+```
+In this case, `node063` won't be selected for submitted jobs.
+
+The following commands could be useful to manage your jobs:
+
+* `$ oarstat`: show all the current jobs
+* `$ oarstat -u`: show *your* jobs
+* `$ oarstat -u -f`: show details of your jobs 
+* `$ oardel 87132`: delete a job whose job ID is 87132
+* `$ oardel --array 87132`: delete all the jobs whose array ID is 87132
+
+You can find your job IDs and array ID in `oarsub` outputs:
+
+```
+$ oarsub --array 4 -S "runSim.sh"
+...
+OAR_JOB_ID=87132
+OAR_JOB_ID=87133
+OAR_JOB_ID=87134
+OAR_JOB_ID=87135
+OAR_ARRAY_ID=87132
+```
+
 ## Code Organization
 
 * `SimEngine/`: the simulator
@@ -111,6 +143,89 @@ The simulator can be run on a cluster system. Here is an example for a cluster b
 * `tests/`: the unit tests, run using `pytest`
 * `traces/`: example `k7` connectivity traces
 
+## Configuration
+
+`runSim.py` reads `config.json` in the current working directory.
+You can specify a specific `config.json` location with `--config` option.
+
+```
+python runSim.py --config=example.json
+```
+
+The `config` parameter can contain:
+
+* the name of the configuration file in the current directory, e.g. `example.json`
+* a path to a configuration file on the computer running the simulation, e.g. `c:\simulator\example.json`
+* a URL of a configuration file somewhere on the Internet, e.g. `https://www.example.com/example.json`
+
+### base format of the configuration file
+
+```
+{
+    "version":               0,
+    "execution": {
+        "numCPUs":           1,
+        "numRuns":           100
+    },
+    "settings": {
+        "combination": {
+            ...
+        },
+        "regular": {
+            ...
+        }
+    },
+    "logging":               "all",
+    "log_directory_name":    "startTime",
+    "post": [
+        "python compute_kpis.py",
+        "python plot.py"
+    ]
+}
+```
+
+* the configuration file is a valid JSON file
+* `version` is the version of the configuration file format; only 0 for now.
+* `execution` specifies the simulator's execution
+    * `numCPUs` is the number of CPUs (CPU cores) to be used; `-1` means "all available cores"
+    * `numRuns` is the number of runs per simulation parameter combination
+* `settings` contains all the settings for running the simulation.
+    * `combination` specifies variations of parameters
+    * `regular` specifies the set of simulator parameters commonly used in a series of simulations
+* `logging` specifies what kinds of logs are recorded; `"all"` or a list of log types
+* `log_directory_name` specifies how sub-directories for log data are named: `"startTime"` or `"hostname"`
+* `post` lists the post-processing commands to run after the end of the simulation.
+
+See `bin/config.json` to find  what parameters should be set and how they are configured.
+
+### more on connectivity models
+
+#### using a *k7* connectivity model
+
+`k7` is a popular format for connectivity traces. 
+You can run the simulator using connectivity traces in your K7 file instead of using the propagation model.
+
+```
+{
+    ...
+    "settings": {
+        "conn_class": "K7"
+        "conn_trace": "../traces/grenoble.k7.gz"
+    },
+    ...
+}
+```
+
+* `conn_class` should be set with `"K7"`
+* `conn_trace` should be set with your K7 file path
+
+### more on applications
+
+`AppPeriodic` and `AppBurst` are available.
+
+### configuration file format validation
+
+The format of the configuration file you pass is validated before starting the simulation. If your configuration file doesn't comply with the format, an `ConfigfileFormatException` is raised, containing a description of the format violation. The simulation is then not started.
 
 ## About 6TiSCH
 

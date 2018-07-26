@@ -69,12 +69,10 @@ def runSimCombinations(params):
     cpuID              = params['cpuID']
     numRuns            = params['numRuns']
     first_run          = params['first_run']
-    configfile         = params['configfile']
     verbose            = params['verbose']
-    log_directory_name = params['log_directory_name']
+    config_data        = params['config_data']
 
-    # sim config (need to re-load, as executing on different CPUs)
-    simconfig = SimConfig.SimConfig(configfile)
+    simconfig = SimConfig.SimConfig(configdata=config_data)
 
     # record simulation start time
     simStartTime        = time.time()
@@ -108,7 +106,7 @@ def runSimCombinations(params):
 
             # create singletons
             settings         = SimSettings.SimSettings(cpuID=cpuID, run_id=run_id, **simParam)
-            settings.setLogDirectory(log_directory_name)
+            settings.setLogDirectory(simconfig.get_log_directory_name())
             settings.setCombinationKeys(combinationKeys)
             simlog           = SimLog.SimLog()
             simlog.set_log_filters(simconfig.logging)
@@ -130,13 +128,12 @@ def runSimCombinations(params):
         # printOrLog
         output  = 'simulation ended after {0:.0f}s ({1} runs).'.format(
             time.time()-simStartTime,
-            numRuns
+            numRuns * len(simParams)
         )
         printOrLog(cpuID, output, verbose)
 
 keep_printing_progress = True
-def printProgressPerCpu(cpuIDs, clear_console=True):
-    hostname = platform.uname()[1]
+def printProgressPerCpu(hostname, cpuIDs, clear_console=True):
     while keep_printing_progress:
         time.sleep(1)
         output     = []
@@ -164,7 +161,17 @@ def merge_output_files(folder_path):
     """
 
     for subfolder in os.listdir(folder_path):
-        file_path_list = sorted(glob.glob(os.path.join(folder_path, subfolder, 'output_cpu*.dat')))
+        # subfolder could have '[' in its name, which is a special character
+        # for glob. This needs to be escaped.
+        file_path_list = sorted(
+            glob.glob(
+                os.path.join(
+                    folder_path,
+                    subfolder.replace('[', '[[]'),
+                    'output_cpu*.dat'
+                )
+            )
+        )
 
         # read files and concatenate results
         with open(os.path.join(folder_path, subfolder + ".dat"), 'w') as outputfile:
@@ -185,33 +192,10 @@ def main():
     cliparams = parseCliParams()
 
     # sim config
-    simconfig = SimConfig.SimConfig(cliparams['config'])
+    simconfig = SimConfig.SimConfig(configfile=cliparams['config'])
     assert simconfig.version == 0
 
     #=== run simulations
-
-    # determine log_directory_name
-    if   simconfig.log_directory_name == 'startTime':
-        log_directory_name = time.strftime("%Y%m%d-%H%M%S")
-    elif simconfig.log_directory_name == 'hostname':
-        # hostname is stored in platform.uname()[1]
-        hostname = platform.uname()[1]
-        log_directory_path = os.path.join(
-            SimSettings.SimSettings.LOG_ROOT_DIR,
-            hostname
-        )
-        # add suffix if there is a directory having the same hostname
-        if os.path.exists(log_directory_path):
-            index = len(glob.glob(log_directory_path + '*'))
-            log_directory_name = '_'.join((hostname, str(index)))
-        else:
-            log_directory_name = hostname
-    else:
-        raise NotImplementedError(
-            'log_directory_name "{0}" is not supported'.format(
-                simconfig.log_directory_name
-            )
-        )
 
     # decide number of CPUs to run on
     multiprocessing.freeze_support()
@@ -229,9 +213,8 @@ def main():
             'cpuID':              0,
             'numRuns':            simconfig.execution.numRuns,
             'first_run':          0,
-            'configfile':         cliparams['config'],
             'verbose':            True,
-            'log_directory_name': log_directory_name
+            'config_data':        simconfig.get_config_data()
         })
 
     else:
@@ -265,7 +248,7 @@ def main():
             clear_console = True
         print_progress_thread = threading.Thread(
             target = printProgressPerCpu,
-            args   = (cpuIDs, clear_console)
+            args   = (platform.uname()[1], cpuIDs, clear_console)
         )
 
         print_progress_thread.start()
@@ -283,9 +266,8 @@ def main():
                     'cpuID':              cpuID,
                     'numRuns':            runs,
                     'first_run':          first_run,
-                    'configfile':         cliparams['config'],
                     'verbose':            False,
-                    'log_directory_name': log_directory_name
+                    'config_data':        simconfig.get_config_data()
                 } for [cpuID, (runs, first_run)] in enumerate(runsPerCPU)
             ]
         )
@@ -308,11 +290,12 @@ def main():
             os.remove('{0}-cpu{1}.templog'.format(hostname, i))
 
     # merge output files
-    folder_path = os.path.join('simData', log_directory_name)
+    folder_path = os.path.join('simData', simconfig.get_log_directory_name())
     merge_output_files(folder_path)
 
     # copy config file into output directory
-    shutil.copy(cliparams['config'], folder_path)
+    with open(os.path.join(folder_path, 'config.json'), 'w') as f:
+        f.write(simconfig.get_config_data())
 
     #=== post-simulation actions
 

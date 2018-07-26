@@ -10,6 +10,7 @@
         },
         "regular": {
             "exec_numSlotframesPerRun":                    1000,
+            "exec_randomSeed":                             "random",
 
             "secjoin_enabled":                             true,
 
@@ -28,20 +29,25 @@
             "fragmentation_ff_vrb_table_size":             50,
             "tsch_max_payload_len":                        90,
 
-            "sf_type":                                     "SFNone",
+            "sf_class":                                    "SFNone",
 
             "tsch_slotDuration":                           0.010,
             "tsch_slotframeLength":                        101,
             "tsch_probBcast_ebDioProb":                    0.33,
+            "tsch_clock_max_drift_ppm":                    30,
+            "tsch_clock_frequency":                        32768,
+            "tsch_keep_alive_interval":                    10,
 
             "charge_log_period_s":                         10,
 
             "conn_class":                                  "Linear",
             "conn_trace":                                  null,
 
-            "phy_numChans":                                16,
-            "phy_minRssi":                                 -97,
-            "phy_noInterference":                          false
+            "conn_random_square_side":                     2.000,
+            "conn_random_init_min_pdr":                    0.5,
+            "conn_random_init_min_neighbors":              3,
+
+            "phy_numChans":                                16
         }
     },
     "logging":                                             "all",

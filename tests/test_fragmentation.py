@@ -12,7 +12,7 @@ import SimEngine
 import SimEngine.Mote.MoteDefines as d
 
 # =========================== helpers =========================================
-    
+
 def get_memory_usage(mote, fragmentation):
     if fragmentation == 'PerHopReassembly':
         memory_structure = mote.sixlowpan.fragmentation.reassembly_buffers
@@ -43,6 +43,63 @@ def fragmentation_ff_discard_vrb_entry_policy(request):
 
 # =========================== tests ===========================================
 
+class TestFreeRun:
+    @pytest.fixture(params=[0, 1])
+    def sixlowpan_reassembly_buffers_num(self, request):
+        return request.param
+
+    @pytest.fixture(params=[0, 50])
+    def fragmentation_ff_vrb_table_size(self, request):
+        return request.param
+
+    def test_with_no_memory_for_fragment(
+            self,
+            sim_engine,
+            sixlowpan_reassembly_buffers_num,
+            fragmentation_ff_vrb_table_size,
+            fragmentation,
+            fragmentation_ff_discard_vrb_entry_policy
+        ):
+
+        # We allocate no memory for PerHopReassembly and for FragmentForwarding
+        # in order to see the stack behavior under the situation where it
+        # cannot add an reassembly buffer nor VRB Table entry for an incoming
+        # fragment.
+
+        if (
+                (sixlowpan_reassembly_buffers_num > 0)
+                and
+                (fragmentation_ff_vrb_table_size > 0)
+            ):
+            # we skip this combination of parameters
+            return
+
+        sim_engine = sim_engine(
+            diff_config = {
+                'exec_numMotes'                            : 3,
+                'sf_class'                                 : 'SFNone',
+                'conn_class'                               : 'Linear',
+                'app_pkPeriod'                             : 5,
+                'app_pkPeriodVar'                          : 0,
+                'tsch_probBcast_ebDioProb'                 : 0,
+                'sixlowpan_reassembly_buffers_num'         : sixlowpan_reassembly_buffers_num,
+                'fragmentation_ff_vrb_table_size'          : fragmentation_ff_vrb_table_size,
+                'app_pkLength'                             : 180,
+                'fragmentation'                            : fragmentation,
+                'fragmentation_ff_discard_vrb_entry_policy': fragmentation_ff_discard_vrb_entry_policy
+            },
+            force_initial_routing_and_scheduling_state = True,
+            )
+
+        u.run_until_asn(sim_engine, 5000)
+
+        # send an application packet from root to the other motes for test with
+        # downward traffic
+        sim_engine.motes[0].app._send_ack(sim_engine.motes[1].id, 180)
+        sim_engine.motes[0].app._send_ack(sim_engine.motes[2].id, 180)
+
+        u.run_until_asn(sim_engine, 10100)
+
 class TestPacketDelivery:
     """ Behavioral Testing for Fragmentation
     """
@@ -70,7 +127,7 @@ class TestPacketDelivery:
             {
                 'exec_numMotes'                            : 3,
                 'exec_numSlotframesPerRun'                 : 10000,
-                'sf_type'                                  : 'SFNone',
+                'sf_class'                                 : 'SFNone',
                 'conn_class'                               : 'Linear',
                 'app_pkPeriod'                             : 5,
                 'app_pkPeriodVar'                          : 0,
@@ -82,7 +139,7 @@ class TestPacketDelivery:
             },
             force_initial_routing_and_scheduling_state = True,
         )
-        
+
         # run the simulation for 1000 timeslots (10 seconds)
         u.run_until_asn(sim_engine, 1000)
 
@@ -129,7 +186,7 @@ class TestPacketDelivery:
             {
                 'exec_numMotes'                            : 3,
                 'exec_numSlotframesPerRun'                 : 10,
-                'sf_type'                                  : 'SFNone',
+                'sf_class'                                 : 'SFNone',
                 'conn_class'                               : 'Linear',
                 'app'                                      : 'AppPeriodic',
                 'app_pkPeriod'                             : 0,
@@ -235,7 +292,7 @@ class TestPacketDelivery:
             {
                 'exec_numMotes'                            : 4,
                 'exec_numSlotframesPerRun'                 : 10,
-                'sf_type'                                  : 'SFNone',
+                'sf_class'                                 : 'SFNone',
                 'conn_class'                               : 'Linear',
                 'app_pkPeriod'                             : 0,
                 'app_pkPeriodVar'                          : 0,
@@ -314,7 +371,7 @@ class TestFragmentationAndReassembly(object):
             diff_config = {
                 'exec_numMotes'                            : 2,
                 'exec_numSlotframesPerRun'                 : 20,
-                'sf_type'                                  : 'SFNone',
+                'sf_class'                                 : 'SFNone',
                 'conn_class'                               : 'Linear',
                 'app_pkPeriod'                             : 0,
                 'app_pkPeriodVar'                          : 0,
@@ -395,6 +452,7 @@ class TestMemoryManagement:
                     'net': {
                         'srcIp'                : hop2.id,
                         'dstIp'                : root.id,
+                        'hop_limit'            : d.IPV6_DEFAULT_HOP_LIMIT,
                         'packet_length'        : 90,
                         'datagram_size'        : 180,
                         'datagram_tag'         : datagram_tag,
@@ -405,7 +463,7 @@ class TestMemoryManagement:
 
         # the memory usage should be the same as memory_limit
         assert get_memory_usage(hop1, fragmentation) == memory_limit
-    
+
     def test_entry_expiration(
             self,
             sim_engine,
@@ -456,6 +514,7 @@ class TestMemoryManagement:
             'net': {
                 'srcIp':           hop2.id,
                 'dstIp':           root.id,
+                'hop_limit':       d.IPV6_DEFAULT_HOP_LIMIT,
                 'datagram_size'  : 270,
                 'datagram_tag'   : 1,
                 'datagram_offset': 0,
@@ -524,7 +583,7 @@ class TestDatagramTagManagement(object):
         sim_engine = sim_engine(
             {
                 'exec_numMotes'                            : 3,
-                'sf_type'                                  : 'SFNone',
+                'sf_class'                                 : 'SFNone',
                 'conn_class'                               : 'Linear',
                 'app_pkLength'                             : 180,
                 'fragmentation'                            : fragmentation,
@@ -610,7 +669,7 @@ class TestFragmentForwarding:
             trigger_fragment_type
         ):
         """Test discard_vrb_entry_policy
-        - objective   : test if a specified policy is implemented
+        - objective   : test if a specified policy is implemented correctly
         - precondition: form a 2-mote linear topology
         - precondition: make root to create a VRB table entry
         - expectation : if the trigger matches the policy, the entry should be removed
