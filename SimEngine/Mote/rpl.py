@@ -14,6 +14,8 @@ note:
 import random
 import math
 
+import netaddr
+
 # Mote sub-modules
 
 # Simulator-wide modules
@@ -47,6 +49,7 @@ class Rpl(object):
         self.log                       = SimEngine.SimLog.SimLog().log
 
         # local variables
+        self.dodagId                   = None
         self.of                        = RplOF0(self)
         self.trickle_timer             = TrickleTimer(
             i_min    = pow(2, self.DEFAULT_DIO_INTERVAL_MIN),
@@ -66,12 +69,13 @@ class Rpl(object):
         return self.of.get_rank()
 
     def getDagRank(self):
-        return int(self.of.get_rank() / d.RPL_MINHOPRANKINCREASE)
+        if self.of.get_rank() is None:
+            return None
+        else:
+            return int(self.of.get_rank() / d.RPL_MINHOPRANKINCREASE)
 
-    def addParentChildfromDAOs(self, parent_id, child_id):
-        assert type(parent_id) is int
-        assert type(child_id)  is int
-        self.parentChildfromDAOs[child_id] = parent_id
+    def addParentChildfromDAOs(self, parent_addr, child_addr):
+        self.parentChildfromDAOs[child_addr] = parent_addr
 
     def getPreferredParent(self):
         # FIXME: when we implement IPv6 address or MAC address, we should
@@ -84,6 +88,7 @@ class Rpl(object):
 
     def start(self):
         if self.mote.dagRoot:
+            self.dodagId = self.mote.get_ipv6_global_addr()
             self.of = RplOFNone(self)
             self.of.set_rank(d.RPL_MINHOPRANKINCREASE)
             self.trickle_timer.start()
@@ -123,10 +128,10 @@ class Rpl(object):
     # === DIS
 
     def action_receiveDIS(self, packet):
-        if   packet['net']['dstIp'] == self.mote.id:
+        if   self.mote.is_my_ipv6_addr(packet['net']['dstIp']):
             # unicast DIS; send unicast DIO back to the source
             self._send_DIO(packet['net']['srcIp'])
-        elif packet['net']['dstIp'] == d.BROADCAST_ADDRESS:
+        elif packet['net']['dstIp'] == d.IPV6_ALL_RPL_NODES_ADDRESS:
             # broadcast DIS
             self.trickle_timer.reset()
         else:
@@ -157,23 +162,24 @@ class Rpl(object):
     def _send_DIS(self):
 
         if   self.dis_mode == 'dis_unicast':
-            dstIp = self.mote.tsch.join_proxy # possible parent
+            # join_proxy is a possible parent
+            dstIp = str(self.mote.tsch.join_proxy.ipv6_link_local())
         elif self.dis_mode == 'dis_broadcast':
-            dstIp = d.BROADCAST_ADDRESS
+            dstIp = d.IPV6_ALL_RPL_NODES_ADDRESS
         elif self.dis_mode == 'disabled':
             return
 
         dis = {
             'type': d.PKT_TYPE_DIS,
             'net' : {
-                'srcIp':         self.mote.id,
+                'srcIp':         str(self.mote.get_ipv6_link_local_addr()),
                 'dstIp':         dstIp,
                 'packet_length': d.PKT_LEN_DIS
             },
             'app' : {}
         }
 
-        self.mote.sixlowpan.sendPacket(dis, link_local=True)
+        self.mote.sixlowpan.sendPacket(dis)
         self._start_dis_timer()
 
     # === DIO
@@ -190,25 +196,25 @@ class Rpl(object):
             }
         )
 
-        self.mote.sixlowpan.sendPacket(dio, link_local=True)
+        self.mote.sixlowpan.sendPacket(dio)
 
     def _create_DIO(self, dstIp=None):
 
-        assert self.mote.dodagId is not None
+        assert self.dodagId is not None
 
         if dstIp is None:
-            dstIp = d.BROADCAST_ADDRESS
+            dstIp = d.IPV6_ALL_RPL_NODES_ADDRESS
 
         # create
         newDIO = {
             'type':              d.PKT_TYPE_DIO,
             'app': {
                 'rank':          self.of.get_rank(),
-                'dodagId':       self.mote.dodagId,
+                'dodagId':       self.dodagId,
             },
             'net': {
-                'srcIp':         self.mote.id,  # from mote
-                'dstIp':         dstIp,         # broadcast (in reality "all RPL routers")
+                'srcIp':         self.mote.get_ipv6_link_local_addr(),
+                'dstIp':         dstIp,
                 'packet_length': d.PKT_LEN_DIO
             }
         }
@@ -241,9 +247,10 @@ class Rpl(object):
         )
 
         # record dodagId
-        if self.mote.dodagId is None:
+        if self.dodagId is None:
             # join the RPL network
-            self.mote.dodagId = packet['app']['dodagId']
+            self.dodagId = packet['app']['dodagId']
+            self.mote.add_ipv6_prefix(d.IPV6_DEFAULT_PREFIX)
             self.trickle_timer.start()
             self.trickle_timer.reset()
             self._stop_dis_timer()
@@ -262,6 +269,13 @@ class Rpl(object):
 
         # abort if DAO disabled
         if self.settings.rpl_daoPeriod == 0:
+           # secjoin never completes if downward traffic is not supported by
+            # DAO
+            assert self.settings.secjoin_enabled is False
+
+            # start sending EBs and application packets.
+            self.mote.tsch.startSendingEBs()
+            self.mote.app.startSendingData()
             return
 
         asnNow = self.engine.getAsn()
@@ -307,22 +321,25 @@ class Rpl(object):
         """
 
         assert not self.mote.dagRoot
-        assert self.mote.dodagId!=None
+        assert self.dodagId!=None
 
         # abort if not ready yet
         if self.mote.clear_to_send_EBs_DATA()==False:
             return
 
+        parent_mac_addr = netaddr.EUI(self.of.get_preferred_parent())
+        prefix = netaddr.IPAddress(d.IPV6_DEFAULT_PREFIX)
+        parent_ipv6_addr = str(parent_mac_addr.ipv6(prefix))
+
         # create
         newDAO = {
             'type':                d.PKT_TYPE_DAO,
             'app': {
-                'child_id':        self.mote.id,
-                'parent_id':       self.of.get_preferred_parent()
+                'parent_addr':     parent_ipv6_addr,
             },
             'net': {
-                'srcIp':           self.mote.id,            # from mote
-                'dstIp':           self.mote.dodagId,       # to DAGroot
+                'srcIp':           self.mote.get_ipv6_global_addr(),
+                'dstIp':           self.dodagId,       # to DAGroot
                 'packet_length':   d.PKT_LEN_DAO,
             },
         }
@@ -337,7 +354,7 @@ class Rpl(object):
         )
 
         # remove other possible DAOs from the queue
-        self.mote.tsch.remove_frame_from_tx_queue(type=d.PKT_TYPE_DAO)
+        self.mote.tsch.remove_frames_in_tx_queue(type=d.PKT_TYPE_DAO)
 
         # send
         self.mote.sixlowpan.sendPacket(newDAO)
@@ -360,29 +377,25 @@ class Rpl(object):
 
         # store parent/child relationship for source route calculation
         self.addParentChildfromDAOs(
-            parent_id   = packet['app']['parent_id'],
-            child_id    = packet['app']['child_id'],
+            parent_addr   = packet['app']['parent_addr'],
+            child_addr    = packet['net']['srcIp']
         )
 
     # source route
 
-    def computeSourceRoute(self, dest_id):
-        """
-        Compute the source route to a given mote.
-
-        :param destAddr: [in] The EUI64 address of the final destination.
-
-        :returns: The source route, a list of EUI64 address, ordered from
-            destination to source, or None
-        """
-        assert type(dest_id) is int
-
+    def computeSourceRoute(self, dst_addr):
+        assert self.mote.dagRoot
         try:
             sourceRoute = []
-            cur_id = dest_id
-            while cur_id!=0:
-                sourceRoute += [cur_id]
-                cur_id       = self.parentChildfromDAOs[cur_id]
+            cur_addr = dst_addr
+            while self.mote.is_my_ipv6_addr(cur_addr) is False:
+                sourceRoute += [cur_addr]
+                cur_addr     = self.parentChildfromDAOs[cur_addr]
+                if cur_addr in sourceRoute:
+                    # routing loop is detected; cannot return an effective
+                    # source-routing header
+                    returnVal = None
+                    break
         except KeyError:
             returnVal = None
         else:
@@ -440,15 +453,20 @@ class RplOF0(object):
         self.rank = None
         self.preferred_parent = None
 
+    @property
+    def parents(self):
+        return (
+            [n for n in self.neighbors if self._calculate_rank(n) is not None]
+        )
+
     def update(self, dio):
         mac_addr = dio['mac']['srcMac']
-        ip_addr = dio['net']['srcIp']
         rank = dio['app']['rank']
 
         # update neighbor's rank
-        neighbor = self._find_neighbor_by_ip_addr(ip_addr)
+        neighbor = self._find_neighbor(mac_addr)
         if neighbor is None:
-            neighbor = self._add_neighbor(ip_addr, mac_addr)
+            neighbor = self._add_neighbor(mac_addr)
         self._update_neighbor_rank(neighbor, rank)
 
         # change preferred parent if necessary
@@ -461,22 +479,19 @@ class RplOF0(object):
         if self.preferred_parent is None:
             return None
         else:
-            # XXX: returning the IPv6 address of the preferred parent here is no
-            # problem now since the value of an IPv6 address is the same as its
-            # node ID.
-            return self.preferred_parent['ip_addr']
+            return self.preferred_parent['mac_addr']
 
     def update_etx(self, cell, mac_addr, isACKed):
-        neighbor = self._find_neighbor_by_mac_addr(mac_addr)
+        neighbor = self._find_neighbor(mac_addr)
         if neighbor is None:
             # we've not received DIOs from this neighbor; ignore the neighbor
             return
         elif (
-                (cell['neighbor'] == mac_addr)
+                (cell.mac_addr == mac_addr)
                 and
-                (d.CELLOPTION_TX in cell['cellOptions'])
+                (d.CELLOPTION_TX in cell.options)
                 and
-                (d.CELLOPTION_SHARED not in cell['cellOptions'])
+                (d.CELLOPTION_SHARED not in cell.options)
             ):
             neighbor['numTx'] += 1
             if isACKed is True:
@@ -484,12 +499,10 @@ class RplOF0(object):
             self._update_neighbor_rank_increase(neighbor)
             self._update_preferred_parent()
 
-    def _add_neighbor(self, ip_addr, mac_addr):
-        assert self._find_neighbor_by_ip_addr(ip_addr) is None
-        assert self._find_neighbor_by_mac_addr(mac_addr) is None
+    def _add_neighbor(self, mac_addr):
+        assert self._find_neighbor(mac_addr) is None
 
         neighbor = {
-            'ip_addr': ip_addr,
             'mac_addr': mac_addr,
             'advertised_rank': None,
             'rank_increase': None,
@@ -500,13 +513,7 @@ class RplOF0(object):
         self._update_neighbor_rank_increase(neighbor)
         return neighbor
 
-    def _find_neighbor_by_ip_addr(self, ip_addr):
-        for neighbor in self.neighbors:
-            if neighbor['ip_addr'] == ip_addr:
-                return neighbor
-        return None
-
-    def _find_neighbor_by_mac_addr(self, mac_addr):
+    def _find_neighbor(self, mac_addr):
         for neighbor in self.neighbors:
             if neighbor['mac_addr'] == mac_addr:
                 return neighbor
@@ -547,14 +554,44 @@ class RplOF0(object):
                 or
                 (neighbor['rank_increase'] is None)
             ):
-            return self.INFINITE_RANK
+            return None
+        elif neighbor['advertised_rank'] == self.INFINITE_RANK:
+            # this neighbor should be ignored
+            return None
         else:
-            return neighbor['advertised_rank'] + neighbor['rank_increase']
+            rank = neighbor['advertised_rank'] + neighbor['rank_increase']
+
+            if rank > self.INFINITE_RANK:
+                return self.INFINITE_RANK
+            else:
+                return rank
 
     def _update_preferred_parent(self):
-        candidate = min(self.neighbors, key=self._calculate_rank)
-        rank_difference = self.get_rank() - self._calculate_rank(candidate)
-        assert rank_difference >= 0
+        try:
+            candidate = min(self.parents, key=self._calculate_rank)
+        except ValueError:
+            # self.parents is empty
+            candidate = None
+
+        current_rank = self.get_rank()
+        new_rank = self._calculate_rank(candidate)
+
+        if (
+                (current_rank is None)
+                and
+                (new_rank is None)
+            ):
+            # we don't have any available parent
+            rank_difference = None
+        elif (
+                (current_rank is None)
+                and
+                (new_rank is not None)
+            ):
+            rank_difference = new_rank
+        else:
+            rank_difference = current_rank - new_rank
+            assert rank_difference >= 0
 
         # Section 6.4, RFC 8180
         #
@@ -565,14 +602,33 @@ class RplOF0(object):
         #   path, the candidate node is selected as the new parent only if the
         #   difference between the new path and the current path is greater
         #   than the defined PARENT_SWITCH_THRESHOLD.
-        if self.PARENT_SWITCH_THRESHOLD < rank_difference:
+        if rank_difference is not None:
+            if self.PARENT_SWITCH_THRESHOLD < rank_difference:
+                new_parent = candidate
+            else:
+                new_parent = None
+        else:
+            new_parent = None
+
+        if (
+                (new_parent is not None)
+                and
+                (new_parent != self.preferred_parent)
+            ):
             # change to the new preferred parent
+
             if self.preferred_parent is None:
                 old_parent_mac_addr = None
             else:
                 old_parent_mac_addr = self.preferred_parent['mac_addr']
-            self.preferred_parent = candidate
+
+            self.preferred_parent = new_parent
+            if new_parent is None:
+                new_parent_mac_addr = None
+            else:
+                new_parent_mac_addr = self.preferred_parent['mac_addr']
+
             self.rpl.indicate_preferred_parent_change(
                 old_preferred = old_parent_mac_addr,
-                new_preferred = self.preferred_parent['mac_addr']
+                new_preferred = new_parent_mac_addr
             )

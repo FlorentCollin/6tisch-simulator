@@ -5,7 +5,7 @@ WAITING_FOR_TX                              = 'waiting_for_tx'
 WAITING_FOR_RX                              = 'waiting_for_rx'
 
 # === addressing
-BROADCAST_ADDRESS                           = 0xffff
+BROADCAST_ADDRESS                           = 'FF-FF'
 
 # === packet types
 PKT_TYPE_DATA                               = 'DATA'
@@ -32,6 +32,8 @@ RPL_PARENT_SWITCH_THRESHOLD                 = 640
 
 # === ipv6
 IPV6_DEFAULT_HOP_LIMIT                      = 64
+IPV6_DEFAULT_PREFIX                         = 'fd00::'
+IPV6_ALL_RPL_NODES_ADDRESS                  = 'ff02::1a'
 
 # === sixlowpan
 SIXLOWPAN_REASSEMBLY_BUFFER_LIFETIME        = 60 # in seconds
@@ -88,6 +90,8 @@ TSCH_MAX_BACKOFF_EXPONENT                   = 7
 CELLOPTION_TX                               = 'TX'
 CELLOPTION_RX                               = 'RX'
 CELLOPTION_SHARED                           = 'SHARED'
+LINKTYPE_ADVERTISING                        = 'ADVERTISING'
+LINKTYPE_NORMAL                             = 'NORMAL'
 INTRASLOTORDER_STARTSLOT                    = 0
 INTRASLOTORDER_PROPAGATE                    = 1
 INTRASLOTORDER_STACKTASKS                   = 2
