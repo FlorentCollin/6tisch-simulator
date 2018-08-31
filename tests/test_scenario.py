@@ -2,6 +2,7 @@ import pytest
 
 from SimEngine import SimLog
 import test_utils as u
+import SimEngine.Mote.MoteDefines as d
 
 # =========================== fixtures ========================================
 
@@ -66,11 +67,15 @@ def check_no_packet_drop():
 def check_neighbor_tables(motes):
     for mote in motes:
         if   mote.id == 0:
-            expectedNeighbors = [1]
-        elif mote.id == len(motes)-1:
-            expectedNeighbors = [len(motes)-2]
+            expectedNeighbors = [motes[1].get_mac_addr()]
+        elif mote.id == len(motes) -1:
+            parent = motes[mote.id - 1]
+            expectedNeighbors = [parent.get_mac_addr()]
         else:
-            expectedNeighbors = [mote.id-1, mote.id+1]
+            parent = motes[mote.id - 1]
+            child = motes[mote.id + 1]
+            expectedNeighbors = [parent.get_mac_addr(), child.get_mac_addr()]
+
         assert sorted(mote.tsch.neighbor_table) == sorted(expectedNeighbors)
 
 # === secjoin
@@ -119,9 +124,11 @@ def rpl_check_root_parentChildfromDAOs(motes):
     # assuming a linear topology
     expected = {}
     for m in motes:
-        if m.id==0:
+        if m.id == 0:
             continue
-        expected[m.id] = m.id-1
+        parent_addr = motes[m.id - 1].get_ipv6_global_addr()
+        child_addr = motes[m.id].get_ipv6_global_addr()
+        expected[child_addr] = parent_addr
 
     assert root.rpl.parentChildfromDAOs == expected
 
@@ -141,10 +148,14 @@ def tsch_all_nodes_check_dedicated_cell(motes):
 
         parent = mote.rpl.getPreferredParent()
 
-        # at least one TX cell to its preferred parent
-        tx_cell_exists = mote.tsch.getDedicatedCells(parent)
+        # at least one dedicated cell to its preferred parent, which has the TX
+        # bit on
+        tx_cells = filter(
+            lambda cell: d.CELLOPTION_TX in cell.options,
+            mote.tsch.get_cells(parent, mote.sf.SLOTFRAME_HANDLE)
+        )
 
-        assert tx_cell_exists
+        assert len(tx_cells) > 0
 
 # =========================== tests ===========================================
 

@@ -47,8 +47,8 @@ def test_enqueue_under_full_tx_queue(sim_engine,frame_type):
     test_frame = {
         'type': frame_type,
         'mac': {
-            'srcMac': hop1.id,
-            'dstMac': root.id,
+            'srcMac': hop1.get_mac_addr(),
+            'dstMac': root.get_mac_addr()
         }
     }
 
@@ -72,7 +72,7 @@ def test_removeTypeFromQueue(sim_engine):
         {'type': 3},
         {'type': 5},
     ]
-    mote.tsch.remove_frame_from_tx_queue(type=3)
+    mote.tsch.remove_frames_in_tx_queue(type=3)
     assert mote.tsch.txQueue == [
         {'type': 1},
         {'type': 2},
@@ -123,7 +123,7 @@ def test_tx_cell_selection(
             'rank':     mote.rpl.get_rank(),
         },
         'net': {
-            'srcIp':    mote.id
+            'srcIp':    mote.get_ipv6_link_local_addr()
         },
     }
 
@@ -133,13 +133,15 @@ def test_tx_cell_selection(
     if packet_type == d.PKT_TYPE_DATA:
         packet['net']['packet_length'] = 180
 
-    # set destination IPv6 address
+    # set destination IPv6 address and and a corresponding neighbor entry
     if   destination == 'broadcast':
-        packet['net']['dstIp'] = d.BROADCAST_ADDRESS
+        packet['net']['dstIp'] = d.IPV6_ALL_RPL_NODES_ADDRESS
     elif destination == 'parent':
-        packet['net']['dstIp'] = parent.id
+        packet['net']['dstIp'] = parent.get_ipv6_link_local_addr()
+        mote.sixlowpan.on_link_neighbor_list.append(parent.get_mac_addr())
     elif destination == 'child':
-        packet['net']['dstIp'] = child.id
+        packet['net']['dstIp'] = child.get_ipv6_link_local_addr()
+        mote.sixlowpan.on_link_neighbor_list.append(child.get_mac_addr())
 
     # send a packet to the target destination
     mote.sixlowpan.sendPacket(packet)
@@ -159,7 +161,7 @@ def test_tx_cell_selection(
 
     for log in u.read_log_file(filter=['tsch.txdone']):
         if  (
-                (log['packet']['mac']['srcMac'] == mote.id)
+                (mote.is_my_mac_addr(log['packet']['mac']['srcMac']))
                 and
                 (log['packet']['type']          == test_packet_type)
             ):
@@ -169,8 +171,9 @@ def test_tx_cell_selection(
     assert(len(logs) > 0)
 
     for log in logs:
-        timeslot_offset = log['_asn'] % sim_engine.settings.tsch_slotframeLength
-        assert mote.tsch.schedule[timeslot_offset]['cellOptions'] == expected_cellOptions
+        slotframe = mote.tsch.slotframes[0]
+        cell = slotframe.get_cells_at_asn(log['_asn'])[0]
+        assert cell.options == expected_cellOptions
 
 @pytest.fixture(params=[d.PKT_TYPE_EB, d.PKT_TYPE_DIO])
 def fixture_adv_frame(request):
@@ -238,7 +241,7 @@ def test_retransmission_count(sim_engine):
     assert len(tx_logs) == 1 + d.TSCH_MAXTXRETRIES
     for tx_log in tx_logs:
         assert tx_log['packet']['type'] == d.PKT_TYPE_DATA
-        assert tx_log['packet']['net']['srcIp'] == hop1.id
+        assert hop1.is_my_ipv6_addr(tx_log['packet']['net']['srcIp'])
         assert tx_log['packet']['app']['appcounter'] == 0
 
 def test_retransmission_backoff_algorithm(sim_engine, cell_type):
@@ -269,11 +272,11 @@ def test_retransmission_backoff_algorithm(sim_engine, cell_type):
     u.run_until_everyone_joined(sim_engine)
 
     # make hop_1 ready to send an application packet
-    assert hop_1.dodagId is None
+    assert hop_1.rpl.dodagId is None
     dio = root.rpl._create_DIO()
-    dio['mac'] = {'srcMac': root.id}
+    dio['mac'] = {'srcMac': root.get_mac_addr()}
     hop_1.rpl.action_receiveDIO(dio)
-    assert hop_1.dodagId is not None
+    assert hop_1.rpl.dodagId is not None
 
     # make root ignore all the incoming frame for this test
     def ignoreRx(self, packet):
@@ -286,13 +289,13 @@ def test_retransmission_backoff_algorithm(sim_engine, cell_type):
         # allocate one TX=1/RX=1/SHARED=1 cell to the motes as their dedicate cell.
         cellOptions   = [d.CELLOPTION_TX, d.CELLOPTION_RX, d.CELLOPTION_SHARED]
 
-        assert len(root.tsch.getTxRxSharedCells(hop_1.id)) == 0
-        root.tsch.addCell(1, 1, hop_1.id, cellOptions)
-        assert len(root.tsch.getTxRxSharedCells(hop_1.id)) == 1
+        assert len(root.tsch.get_cells(hop_1.get_mac_addr())) == 0
+        root.tsch.addCell(1, 1, hop_1.get_mac_addr(), cellOptions)
+        assert len(root.tsch.get_cells(hop_1.get_mac_addr())) == 1
 
-        assert len(hop_1.tsch.getTxRxSharedCells(root.id)) == 0
-        hop_1.tsch.addCell(1, 1, root.id, cellOptions)
-        assert len(hop_1.tsch.getTxRxSharedCells(root.id)) == 1
+        assert len(hop_1.tsch.get_cells(root.get_mac_addr())) == 0
+        hop_1.tsch.addCell(1, 1, root.get_mac_addr(), cellOptions)
+        assert len(hop_1.tsch.get_cells(root.get_mac_addr())) == 1
 
     # make sure hop_1 send a application packet when the simulator starts
     hop_1.tsch.txQueue = []
@@ -321,7 +324,7 @@ def test_retransmission_backoff_algorithm(sim_engine, cell_type):
         if (
                 (log['_mote_id'] == hop_1.id)
                 and
-                (log['packet']['mac']['dstMac'] == root.id)
+                (root.is_my_mac_addr(log['packet']['mac']['dstMac']))
                 and
                 (log['packet']['type'] == d.PKT_TYPE_DATA)
             ):
@@ -333,7 +336,8 @@ def test_retransmission_backoff_algorithm(sim_engine, cell_type):
     # available (it shouldn't transmit a unicast frame to the root on the
     # minimal (shared) cell.
     if   cell_type == 'dedicated-cell':
-        expected_cell_offset, _ = hop_1.tsch.getTxRxSharedCells(root.id).items()[0]
+        _cell = hop_1.tsch.get_cells(root.get_mac_addr())[0]
+        expected_cell_offset = _cell.slot_offset
     elif cell_type == 'shared-cell':
         expected_cell_offset = 0   # the minimal (shared) cell
     else:
@@ -366,3 +370,44 @@ def test_eb_by_root(sim_engine):
     #   DAGRank(rank(0))-1 = 0 is compliant with 802.15.4's requirement of
     #   having the root use Join Metric = 0.
     assert eb['app']['join_metric'] == 0
+
+def test_select_active_tx_cell(sim_engine):
+    # this test is for a particular case; it's not a general test for
+    # Tsch._select_active_cell()
+
+    sim_engine = sim_engine(diff_config={'exec_numMotes': 3})
+    mote = sim_engine.motes[0]
+    neighbor_mac_addr_1 = sim_engine.motes[1].get_mac_addr()
+    neighbor_mac_addr_2 = sim_engine.motes[2].get_mac_addr()
+    txshared_cell_options = [d.CELLOPTION_TX, d.CELLOPTION_SHARED]
+
+    # install one RX cell and one TX/SHARED cell. the TX/SHARED cell is
+    # dedicated for the neighbor same slot offset
+    mote.tsch.addCell(1, 1, neighbor_mac_addr_1, txshared_cell_options)
+    mote.tsch.addCell(1, 1, neighbor_mac_addr_2, txshared_cell_options)
+
+    # put one unicast frame for neighbor_1 to the TX queue first
+    frame_1 = {'mac': {'dstMac': neighbor_mac_addr_1, 'retriesLeft': d.TSCH_MAXTXRETRIES}}
+    mote.tsch.txQueue.append(frame_1)
+
+    # put two unicast frames for neighbor_2 to the TX queue; the first of
+    # the two frames is under retransmission
+    frame_2 = {'mac': {'dstMac': neighbor_mac_addr_2, 'retriesLeft': d.TSCH_MAXTXRETRIES}}
+    frame_3 = {'mac': {'dstMac': neighbor_mac_addr_2, 'retriesLeft': d.TSCH_MAXTXRETRIES}}
+    frame_2['mac']['retriesLeft'] -= 1
+    mote.tsch.txQueue.append(frame_2)
+    mote.tsch.txQueue.append(frame_3)
+
+    # set 1 to backoff_remaining_delay so that the TSCH stack skips the cell
+    # for neighbor_mac_adddr_2
+    mote.tsch.backoff_remaining_delay = 1
+
+    # Tsch._select_active_cell() should select the cell for neighbor_mac_addr_1
+    # because the frame for neighbor_mac_addr_2 is under retransmission
+    candidate_cells = mote.tsch.slotframes[0].get_cells_at_asn(1)
+    cell, packet = mote.tsch._select_active_cell(candidate_cells)
+
+    assert mote.tsch.txQueue == [frame_1, frame_2, frame_3]
+    assert cell is not None
+    assert cell.mac_addr == neighbor_mac_addr_1
+    assert packet == frame_1

@@ -162,16 +162,16 @@ class TestRandom(object):
                 for _ in range(100):
                     pdr.append(
                         sim_engine.connectivity.get_pdr(
-                            source      = src.id,
-                            destination = dst.id,
-                            channel     = channel
+                            src_id  = src.id,
+                            dst_id  = dst.id,
+                            channel = channel
                         )
                     )
                     rssi.append(
                         sim_engine.connectivity.get_rssi(
-                            source      = src.id,
-                            destination = dst.id,
-                            channel     = channel
+                            src_id  = src.id,
+                            dst_id  = dst.id,
+                            channel = channel
                         )
                     )
                     # proceed the simulator
@@ -192,16 +192,16 @@ class TestRandom(object):
                 for _ in range(100):
                     pdr.append(
                         sim_engine.connectivity.get_pdr(
-                            source      = src.id,
-                            destination = dst.id,
-                            channel     = channel
+                            src_id  = src.id,
+                            dst_id  = dst.id,
+                            channel = channel
                         )
                     )
                     rssi.append(
                         sim_engine.connectivity.get_rssi(
-                            source      = src.id,
-                            destination = dst.id,
-                            channel     = channel
+                            src_id  = src.id,
+                            dst_id  = dst.id,
+                            channel = channel
                         )
                     )
 
@@ -267,9 +267,9 @@ def test_lockon(sim_engine):
 
     # force hop_1 to join the network
     eb = root.tsch._create_EB()
-    hop_1.tsch._tsch_action_receiveEB(eb)
+    hop_1.tsch._action_receiveEB(eb)
     dio = root.rpl._create_DIO()
-    dio['mac'] = {'srcMac': root.id}
+    dio['mac'] = {'srcMac': root.get_mac_addr()}
     hop_1.rpl.action_receiveDIO(dio)
 
     # let hop_1 send an application packet

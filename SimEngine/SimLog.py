@@ -60,7 +60,7 @@ LOG_SIXLOWPAN_PKT_RX              = {'type': 'sixlowpan.pkt.rx',          'keys'
 LOG_SIXLOWPAN_FRAG_GEN            = {'type': 'sixlowpan.frag.gen',        'keys': ['_mote_id','packet']}
 
 # === MSF
-LOG_MSF_CELL_UTILIZATION          = {'type': 'msf.cell_utilization',      'keys': ['_mote_id','neighbor_id','value']}
+LOG_MSF_CELL_UTILIZATION          = {'type': 'msf.cell_utilization',      'keys': ['_mote_id','neighbor','value']}
 LOG_MSF_ERROR_SCHEDULE_FULL       = {'type': 'msf.error.schedule_full',   'keys': ['_mote_id']}
 
 # === sixp
@@ -74,8 +74,8 @@ LOG_TSCH_SYNCED                   = {'type': 'tsch.synced',               'keys'
 LOG_TSCH_DESYNCED                 = {'type': 'tsch.desynced',             'keys': ['_mote_id']}
 LOG_TSCH_EB_TX                    = {'type': 'tsch.eb.tx',                'keys': ['_mote_id','packet']}
 LOG_TSCH_EB_RX                    = {'type': 'tsch.eb.rx',                'keys': ['_mote_id','packet']}
-LOG_TSCH_ADD_CELL                 = {'type': 'tsch.add_cell',             'keys': ['_mote_id','slotOffset','channelOffset','neighbor','cellOptions']}
-LOG_TSCH_DELETE_CELL              = {'type': 'tsch.delete_cell',          'keys': ['_mote_id','slotOffset','channelOffset','neighbor','cellOptions']}
+LOG_TSCH_ADD_CELL                 = {'type': 'tsch.add_cell',             'keys': ['_mote_id','slotFrameHandle','slotOffset','channelOffset','neighbor','cellOptions']}
+LOG_TSCH_DELETE_CELL              = {'type': 'tsch.delete_cell',          'keys': ['_mote_id','slotFrameHandle','slotOffset','channelOffset','neighbor','cellOptions']}
 LOG_TSCH_TXDONE                   = {'type': 'tsch.txdone',               'keys': ['_mote_id','channel','packet','isACKed']}
 LOG_TSCH_RXDONE                   = {'type': 'tsch.rxdone',               'keys': ['_mote_id','packet']}
 LOG_TSCH_BACKOFF_EXPONENT_UPDATED = {'type': 'tsch.be.updated',           'keys': ['_mote_id','old_be', 'new_be']}
