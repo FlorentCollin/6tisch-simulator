@@ -72,7 +72,7 @@ def test_removeTypeFromQueue(sim_engine):
         {'type': 3},
         {'type': 5},
     ]
-    mote.tsch.remove_frames_in_tx_queue(type=3)
+    mote.tsch.remove_packets_in_tx_queue(type=3)
     assert mote.tsch.txQueue == [
         {'type': 1},
         {'type': 2},
@@ -250,7 +250,8 @@ def test_retransmission_backoff_algorithm(sim_engine, cell_type):
             'exec_numSlotframesPerRun': 10000,
             'exec_numMotes'           : 2,
             'app_pkPeriod'            : 0,
-            'secjoin_enabled'         : False
+            'secjoin_enabled'         : False,
+            'tsch_keep_alive_interval': 0
         }
     )
     sim_log = SimLog.SimLog()
@@ -279,7 +280,7 @@ def test_retransmission_backoff_algorithm(sim_engine, cell_type):
     assert hop_1.rpl.dodagId is not None
 
     # make root ignore all the incoming frame for this test
-    def ignoreRx(self, packet):
+    def ignoreRx(self, packet, channel):
         self.waitingFor = None
         isACKed         = False
         return isACKed
@@ -398,9 +399,9 @@ def test_select_active_tx_cell(sim_engine):
     mote.tsch.txQueue.append(frame_2)
     mote.tsch.txQueue.append(frame_3)
 
-    # set 1 to backoff_remaining_delay so that the TSCH stack skips the cell
-    # for neighbor_mac_adddr_2
-    mote.tsch.backoff_remaining_delay = 1
+    # set 1 to backoff_remaining_delay of frame_2 so that the TSCH stack skips
+    # the cell for neighbor_mac_adddr_2
+    frame_2['backoff_remaining_delay'] = 1
 
     # Tsch._select_active_cell() should select the cell for neighbor_mac_addr_1
     # because the frame for neighbor_mac_addr_2 is under retransmission
@@ -411,3 +412,148 @@ def test_select_active_tx_cell(sim_engine):
     assert cell is not None
     assert cell.mac_addr == neighbor_mac_addr_1
     assert packet == frame_1
+
+def test_get_available_slots(sim_engine):
+    sim_engine = sim_engine(
+        diff_config = {
+            'exec_numMotes'       : 1,
+            'tsch_slotframeLength': 101
+        }
+    )
+    mote = sim_engine.motes[0]
+
+    # by default, the mote has the minimal cell. So, its available cells are
+    # slot offset 1 to 100.
+    assert mote.tsch.get_available_slots() == list(range(1,101))
+
+    # add one cell at slot offset 1
+    mote.tsch.addCell(1, 1, None, [], 0)
+
+    # slot offset 1 should not be in the available cells, now
+    assert 1 not in mote.tsch.get_available_slots()
+
+def test_get_physical_channel(sim_engine):
+    sim_engine = sim_engine(
+        diff_config = {
+            'exec_numMotes'       : 1,
+            'tsch_slotframeLength': 101
+        }
+    )
+    mote = sim_engine.motes[0]
+    minimal_cell = mote.tsch.get_cell(
+        slot_offset      = 0,
+        channel_offset   = 0,
+        mac_addr         = None,
+        slotframe_handle = 0
+    )
+
+    assert minimal_cell is not None
+
+    for i in range(len(d.TSCH_HOPPING_SEQUENCE)):
+        if i > 0:
+            u.run_until_asn(
+                sim_engine,
+                (
+                    sim_engine.getAsn() +
+                    sim_engine.settings.tsch_slotframeLength
+                )
+            )
+            assert (
+                previous_channel !=
+                mote.tsch._get_physical_channel(minimal_cell)
+            )
+        else:
+            pass
+        previous_channel = mote.tsch._get_physical_channel(minimal_cell)
+
+
+@pytest.fixture(params=[False, True])
+def fixture_pending_bit_enabled(request):
+    return request.param
+
+def test_pending_bit(sim_engine, fixture_pending_bit_enabled):
+    sim_engine = sim_engine(
+        diff_config = {
+            'exec_numMotes'           : 2,
+            'exec_numSlotframesPerRun': 3,
+            'sf_class'                : 'SFNone',
+            'secjoin_enabled'         : False,
+            'app_pkPeriod'            : 0,
+            'rpl_daoPeriod'           : 0,
+            'tsch_keep_alive_interval': 0,
+            'conn_class'              : 'Linear'
+        }
+    )
+
+    # short-hands
+    root = sim_engine.motes[0]
+    mote = sim_engine.motes[1]
+
+    # get the mote joined the network
+    eb = root.tsch._create_EB()
+    mote.tsch._action_receiveEB(eb)
+    dio = root.rpl._create_DIO()
+    dio['mac'] = {'srcMac': root.get_mac_addr()}
+    mote.rpl.action_receiveDIO(dio)
+
+    # activate the pending bit feature if necessary
+    if fixture_pending_bit_enabled:
+        root.tsch.enable_pending_bit()
+        mote.tsch.enable_pending_bit()
+
+    # add a shared cell on slot_offset 1 and channel offset 1
+    root.tsch.addCell(1, 1, None, [d.CELLOPTION_RX])
+    mote.tsch.addCell(
+        1,
+        1,
+        root.get_mac_addr(),
+        [
+            d.CELLOPTION_TX, d.CELLOPTION_SHARED
+        ]
+    )
+
+    # put two DATA packets and one DIO between them to the TX queue of the mote
+    mote.tsch.txQueue = []
+    assert len(mote.tsch.txQueue) == 0
+    mote.app._send_packet(
+        dstIp         = root.get_ipv6_global_addr(),
+        packet_length = 10
+    )
+    mote.rpl._send_DIO()
+    mote.app._send_packet(
+        dstIp         = root.get_ipv6_global_addr(),
+        packet_length = 10
+    )
+    assert len(mote.tsch.txQueue) == 3
+
+    u.run_until_end(sim_engine)
+
+    # check logs
+    logs = [
+        log
+        for log in u.read_log_file(filter=[SimLog.LOG_TSCH_TXDONE['type']])
+        if log['packet']['type'] == d.PKT_TYPE_DATA
+    ]
+    assert len(logs) == 2
+
+    if fixture_pending_bit_enabled:
+        # the second DATA packet is sent on the same channel as the first one
+        # by the pending bit feature
+        assert logs[0]['slot_offset'] == 1
+        assert logs[0]['channel_offset'] == 1
+        assert logs[1]['slot_offset'] == None
+        assert logs[1]['channel_offset'] == None
+        assert logs[0]['channel'] == logs[1]['channel']
+        assert logs[1]['_asn'] - logs[0]['_asn'] == 1
+    else:
+        # two DATA packets should be sent on the shared cell in different slot
+        # frames
+        assert logs[0]['slot_offset'] == 1
+        assert logs[0]['channel_offset'] == 1
+        assert logs[1]['slot_offset'] == 1
+        assert logs[1]['channel_offset'] == 1
+        assert logs[0]['channel'] != logs[1]['channel']
+        assert (
+            (logs[1]['_asn'] - logs[0]['_asn']) ==
+            sim_engine.settings.tsch_slotframeLength
+        )

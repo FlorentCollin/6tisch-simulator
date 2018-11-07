@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import traceback
+import json
 
 import Mote
 import SimSettings
@@ -30,7 +31,7 @@ class DiscreteEventEngine(threading.Thread):
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
-            cls._instance = super(DiscreteEventEngine,cls).__new__(cls, *args, **kwargs)
+            cls._instance = super(DiscreteEventEngine,cls).__new__(cls)
         return cls._instance
     #===== end singleton
 
@@ -148,22 +149,25 @@ class DiscreteEventEngine(threading.Thread):
             output += [traceback.format_exc()]
             output += ['==============================']
             output += ['']
-            output += ['The following settings are used:']
-            output += ['']
-            for k, v in SimSettings.SimSettings().__dict__.iteritems():
-                if (
-                        (k == 'exec_randomSeed')
-                        and
-                        (v in ['random', 'context'])
-                    ):
-                    # put the random seed value in output
-                    # exec_randomSeed: random
-                    v = '{0} ({1})'.format(v, self.random_seed)
-                output += ['{0}: {1}'.format(str(k), str(v))]
+            output += ['The current ASN is {0}'.format(self.asn)]
+            output += ['The log file is {0}'.format(
+                self.settings.getOutputFile()
+            )]
             output += ['']
             output += ['==============================']
+            output += ['config.json to reproduce:']
+            output += ['']
             output += ['']
             output  = '\n'.join(output)
+            output += json.dumps(
+                SimConfig.SimConfig.generate_config(
+                    settings_dict = self.settings.__dict__,
+                    random_seed   = self.random_seed
+                ),
+                indent = 4
+            )
+            output += '\n\n==============================\n'
+
             sys.stderr.write(output)
 
             # flush all the buffered log data
@@ -358,6 +362,11 @@ class SimEngine(DiscreteEventEngine):
                 'value': self.random_seed
             }
         )
+        # flush buffered logs, which are supposed to be 'config' and
+        # 'random_seed' lines, right now. This could help, for instance, when a
+        # simulation is stuck by an infinite loop without writing these
+        # 'config' and 'random_seed' to a log file.
+        SimLog.SimLog().flush()
         
         # select dagRoot
         self.motes[self.DAGROOT_ID].setDagRoot()

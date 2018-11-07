@@ -16,6 +16,7 @@ succeeds.
 
 # =========================== imports =========================================
 
+import copy
 import sys
 import random
 import math
@@ -44,6 +45,14 @@ class Connectivity(object):
         return getattr(sys.modules[__name__], class_name)()
 
 class ConnectivityBase(object):
+    CONNECTIVITY_MATRIX_PERFECT_LINK = {
+        'pdr' : 1.00,
+        'rssi':  -10
+    }
+    CONNECTIVITY_MATRIX_NO_LINK = {
+        'pdr' :     0,
+        'rssi': -1000
+    }
 
     # ===== start singleton
     _instance = None
@@ -51,7 +60,7 @@ class ConnectivityBase(object):
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
-            cls._instance = super(ConnectivityBase, cls).__new__(cls, *args, **kwargs)
+            cls._instance = super(ConnectivityBase, cls).__new__(cls)
         return cls._instance
     # ===== end singleton
 
@@ -81,10 +90,9 @@ class ConnectivityBase(object):
             for destination in self.engine.motes:
                 self.connectivity_matrix[source.id][destination.id] = {}
                 for channel in range(self.settings.phy_numChans):
-                    self.connectivity_matrix[source.id][destination.id][channel] = {
-                        "pdr":      0,
-                        "rssi": -1000,
-                    }
+                    self.connectivity_matrix[source.id][destination.id][channel] = copy.copy(
+                        self.CONNECTIVITY_MATRIX_NO_LINK
+                    )
 
         # introduce some connectivity in the matrix
         self._init_connectivity_matrix()
@@ -431,10 +439,9 @@ class ConnectivityFullyMeshed(ConnectivityBase):
         for source in self.engine.motes:
             for destination in self.engine.motes:
                 for channel in range(self.settings.phy_numChans):
-                    self.connectivity_matrix[source.id][destination.id][channel] = {
-                        "pdr": 1.00,
-                        "rssi": -10,
-                    }
+                    self.connectivity_matrix[source.id][destination.id][channel] = copy.copy(
+                        self.CONNECTIVITY_MATRIX_PERFECT_LINK
+                    )
 
 class ConnectivityLinear(ConnectivityBase):
     """
@@ -448,14 +455,12 @@ class ConnectivityLinear(ConnectivityBase):
         for mote in self.engine.motes:
             if parent is not None:
                 for channel in range(self.settings.phy_numChans):
-                    self.connectivity_matrix[mote.id][parent.id][channel] = {
-                        "pdr": 1.00,
-                        "rssi": -10,
-                    }
-                    self.connectivity_matrix[parent.id][mote.id][channel] = {
-                        "pdr": 1.00,
-                        "rssi": -10,
-                    }
+                    self.connectivity_matrix[mote.id][parent.id][channel] = copy.copy(
+                        self.CONNECTIVITY_MATRIX_PERFECT_LINK
+                    )
+                    self.connectivity_matrix[parent.id][mote.id][channel] = copy.copy(
+                        self.CONNECTIVITY_MATRIX_PERFECT_LINK
+                    )
             parent = mote
 
 class ConnectivityK7(ConnectivityBase):
@@ -476,7 +481,9 @@ class ConnectivityK7(ConnectivityBase):
             for dest in self.engine.motes:
                 self.connectivity_matrix[source.id][dest.id] = {}
                 for chan in range(self.settings.phy_numChans):
-                    self.connectivity_matrix[source.id][dest.id][chan] = {}
+                    self.connectivity_matrix[source.id][dest.id][chan] = copy.copy(
+                        self.CONNECTIVITY_MATRIX_NO_LINK
+                    )
 
         # load first trace transaction and init
         self.first_date = None
@@ -509,22 +516,22 @@ class ConnectivityK7(ConnectivityBase):
 
     # overloaded methods
 
-    def get_pdr(self, source, destination, channel):
+    def get_pdr(self, src_id, dst_id, channel):
         # update PDR matrix if we are a new row in our K7 file
         if  self.connectivity_matrix_timestamp < self.engine.asn:
             self.connectivity_matrix_timestamp = self._update_connectivity_matrix_from_trace()
 
         # then call the parent's method
-        return super(ConnectivityK7, self).get_pdr(source, destination, channel)
+        return super(ConnectivityK7, self).get_pdr(src_id, dst_id, channel)
 
-    def get_rssi(self, source, destination, channel):
+    def get_rssi(self, src_id, dst_id, channel):
         # update PDR matrix if we are a new row in our K7 file
         if  self.connectivity_matrix_timestamp < self.engine.asn:
             self.connectivity_matrix_timestamp = self._update_connectivity_matrix_from_trace()
 
         # then call the parent's method
-        print source, destination, channel
-        return super(ConnectivityK7, self).get_rssi(source, destination, channel)
+        print src_id, dst_id, channel
+        return super(ConnectivityK7, self).get_rssi(src_id, dst_id, channel)
 
     # ======================= private =========================================
 
@@ -579,7 +586,7 @@ class ConnectivityK7(ConnectivityBase):
 
         # rssi
         if row['mean_rssi'] == '':
-            row['mean_rssi'] = -1000
+            row['mean_rssi'] = self.CONNECTIVITY_MATRIX_NO_LINK['rssi']
         else:
             row['mean_rssi'] = float(row['mean_rssi'])
 
@@ -731,7 +738,7 @@ class ConnectivityRandom(ConnectivityBase):
         self.connectivity_matrix[mote_id_2][mote_id_1][channel]['rssi'] = rssi
 
     def _clear_rssi(self, mote_id_1, mote_id_2, channel):
-        INVALID_RSSI = -1000
+        INVALID_RSSI = self.CONNECTIVITY_MATRIX_NO_LINK['rssi']
         self._set_rssi(mote_id_1, mote_id_2, channel, rssi=INVALID_RSSI)
 
     def _set_pdr(self, mote_id_1, mote_id_2, channel, pdr):

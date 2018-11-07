@@ -9,6 +9,7 @@ import pytest
 import test_utils as u
 import SimEngine.Mote.MoteDefines as d
 import SimEngine.Mote.rpl as rpl
+from SimEngine import SimLog
 
 @pytest.fixture(params=['FullyMeshed','Linear'])
 def fixture_conn_class(request):
@@ -244,7 +245,7 @@ class TestOF0(object):
         dio_from_mote_1['app']['rank'] = 256 + 1
         dio_from_mote_2['app']['rank'] = (
             dio_from_mote_1['app']['rank'] +
-            mote_3.rpl.of.PARENT_SWITCH_THRESHOLD
+            d.RPL_PARENT_SWITCH_RANK_THRESHOLD
         )
 
         # inject DIO from mote_2 to mote_3
@@ -287,7 +288,63 @@ class TestOF0(object):
         # since it advertises the infinite rank (see section 8.2.2.5, RFC
         # 6550). In other words, mote shouldn't have any effective rank. It
         # should have None for its rank.
-        assert mote.rpl.of.get_rank() is None
+        assert mote.rpl.of.rank is None
+
+    def test_upper_limit_of_accepatble_etx(self, sim_engine):
+        sim_engine = sim_engine(
+            diff_config = {
+                'exec_numMotes'  : 2,
+                'secjoin_enabled': False
+            }
+        )
+
+        root = sim_engine.motes[0]
+        mote = sim_engine.motes[1]
+
+        # get mote synched and joined
+        eb = root.tsch._create_EB()
+        mote.tsch._action_receiveEB(eb)
+
+        dio = root.rpl._create_DIO()
+        dio['mac'] = {'srcMac': root.get_mac_addr()}
+        mote.rpl.action_receiveDIO(dio)
+
+        # now mote has root as its preferred parent
+        assert mote.rpl.getPreferredParent() == root.get_mac_addr()
+
+        # install a dummy cell
+        mote.tsch.addCell(1, 1, root.get_mac_addr(), [d.CELLOPTION_TX])
+        cell = mote.tsch.get_cells(root.get_mac_addr())[0]
+
+        # when ETX exceeds UPPER_LIMIT_OF_ACCEPTABLE_ETX, mote should leave
+        # root
+        mote.rpl.of.update_etx(cell, root.get_mac_addr(), isACKed=True) # ETX is 1
+        for _ in range(mote.rpl.of.UPPER_LIMIT_OF_ACCEPTABLE_ETX - 1):
+            mote.rpl.of.update_etx(cell, root.get_mac_addr(), isACKed=False)
+
+        # ETX == UPPER_LIMIT_OF_ACCEPTABLE_ETX; root should be still mote's
+        # parent
+        assert mote.rpl.getPreferredParent() == root.get_mac_addr()
+
+        # mote should lose its preferred parent
+        mote.rpl.of.update_etx(cell, root.get_mac_addr(), isACKed=False)
+        assert mote.rpl.getPreferredParent() is None
+
+        # give the DIO again
+        mote.rpl.action_receiveDIO(dio)
+        assert mote.rpl.getPreferredParent() == root.get_mac_addr()
+
+        # if mote has many consecutive transmission failures without any
+        # success, it should leave the preferred parent
+        for _ in range(mote.rpl.of.MAX_NUM_OF_CONSECUTIVE_FAILURES_WITHOUT_ACK):
+            mote.rpl.of.update_etx(cell, root.get_mac_addr(), isACKed=False)
+
+        # mote should still have the preferred parent
+        assert mote.rpl.getPreferredParent() == root.get_mac_addr()
+
+        # then, it should lose it
+        mote.rpl.of.update_etx(cell, root.get_mac_addr(), isACKed=False)
+        assert mote.rpl.getPreferredParent() is None
 
 
 @pytest.fixture(params=['dis_unicast', 'dis_broadcast', None])
@@ -295,11 +352,14 @@ def fixture_dis_mode(request):
     return request.param
 
 
-def test_dis(sim_engine, fixture_dis_mode):
+def test_dis_config(sim_engine, fixture_dis_mode):
     sim_engine = sim_engine(
         diff_config = {
-            'exec_numMotes' : 2,
-            'rpl_extensions': [fixture_dis_mode]
+            'exec_numMotes'           : 2,
+            'rpl_extensions'          : [fixture_dis_mode],
+            'secjoin_enabled'         : False,
+            'app_pkPeriod'            : 0,
+            'tsch_keep_alive_interval': 0
         }
     )
 
@@ -310,8 +370,10 @@ def test_dis(sim_engine, fixture_dis_mode):
     eb = root.tsch._create_EB()
     mote.tsch._action_receiveEB(eb)
 
+    # stop the trickle timer for this test
+    root.rpl.trickle_timer.stop()
+
     # prepare sendPacket() for this test
-    sednPacket_is_called = False
     result = {'dis': None, 'dio': None}
     def sendPacket(self, packet):
         if packet['type'] == d.PKT_TYPE_DIS:
@@ -328,23 +390,67 @@ def test_dis(sim_engine, fixture_dis_mode):
             else:
                 assert dstIp == d.IPV6_ALL_RPL_NODES_ADDRESS
             result['dio'] = packet
+        self.original_sendPacket(packet)
 
+    mote.sixlowpan.original_sendPacket = mote.sixlowpan.sendPacket
     mote.sixlowpan.sendPacket = types.MethodType(sendPacket, mote.sixlowpan)
+    root.sixlowpan.original_sendPacket = root.sixlowpan.sendPacket
     root.sixlowpan.sendPacket = types.MethodType(sendPacket, root.sixlowpan)
-    mote.rpl._send_DIS()
+    mote.rpl.start()
+
+    # run the simulation for a while
+    u.run_until_asn(sim_engine, 1000)
 
     if fixture_dis_mode is None:
         assert result['dis'] is None
         assert result['dio'] is None
     else:
         assert result['dis'] is not None
-        root.rpl.action_receiveDIS(result['dis'])
     if fixture_dis_mode == 'dis_unicast':
         assert result['dio'] is not None
     else:
         # DIS is not sent immediately
         assert result['dio'] is None
 
+def test_dis_timer(sim_engine):
+    sim_engine = sim_engine(
+        diff_config = {
+            'exec_numMotes'           : 2,
+            'rpl_extensions'          : ['dis_unicast'],
+            'secjoin_enabled'         : False,
+            'app_pkPeriod'            : 0,
+            'tsch_keep_alive_interval': 0,
+            'exec_numSlotframesPerRun': rpl.Rpl.DEFAULT_DIS_INTERVAL_SECONDS + 1
+        }
+    )
+
+    root = sim_engine.motes[0]
+    mote = sim_engine.motes[1]
+
+    # get mote synchronized
+    eb = root.tsch._create_EB()
+    mote.tsch._action_receiveEB(eb)
+
+    # disable root's communication capability by deleting the minimal shared
+    # cell
+    root.tsch.delete_minimal_cell()
+
+    # run the simulation
+    u.run_until_end(sim_engine)
+
+    # collect DIS logs
+    logs = u.read_log_file(
+        filter = [SimLog.LOG_RPL_DIS_TX['type']]
+    )
+
+    # check DIS packets
+    assert len(logs) > 1
+    # the first DIS should be sent to the link-local address of root because
+    # 'dis_unicast' is specified
+    logs[0]['packet']['net']['dstIp'] = root.get_ipv6_link_local_addr()
+    # the rest should be sent to the multicast address despite of 'dis_unicast'
+    for i in range(1, len(logs)):
+        assert logs[i]['packet']['net']['dstIp'] == d.IPV6_ALL_RPL_NODES_ADDRESS
 
 def test_handle_routing_loop_at_root(sim_engine):
     sim_engine = sim_engine(diff_config={'exec_numMotes': 1})
@@ -362,3 +468,71 @@ def test_handle_routing_loop_at_root(sim_engine):
     root.rpl.computeSourceRoute(addr_1)
 
     assert True
+
+@pytest.fixture(params=['smaller', 'same', 'larger'])
+def fixture_rank_value(request):
+    return request.param
+
+def test_dodag_parent(sim_engine, fixture_rank_value):
+    sim_engine = sim_engine(
+        diff_config = {
+            'exec_numMotes'  : 3,
+            'secjoin_enabled': False
+        }
+    )
+
+    root   = sim_engine.motes[0]
+    parent = sim_engine.motes[1]
+    child  = sim_engine.motes[2]
+
+    # get them connected to the network
+    eb = root.tsch._create_EB()
+    parent.tsch._action_receiveEB(eb)
+    child.tsch._action_receiveEB(eb)
+
+    dio = root.rpl._create_DIO()
+    dio['mac'] = {'srcMac': root.get_mac_addr()}
+    parent.rpl.action_receiveDIO(dio)
+
+    dio = parent.rpl._create_DIO()
+    dio['mac'] = {'srcMac': parent.get_mac_addr()}
+    child.rpl.action_receiveDIO(dio)
+
+    # make sure they are ready for the test
+    assert parent.clear_to_send_EBs_DATA() is True
+    assert child.clear_to_send_EBs_DATA() is True
+    assert len(child.rpl.of.parents) == 1
+    assert child.rpl.of.parents[0]['mac_addr'] == parent.get_mac_addr()
+
+    # create a DIO of 'parent' fot the test
+    dio = parent.rpl._create_DIO()
+    dio['mac'] = {'srcMac': parent.get_mac_addr()}
+    if fixture_rank_value == 'smaller':
+        dio['app']['rank'] = child.rpl.get_rank() - d.RPL_MINHOPRANKINCREASE
+    elif fixture_rank_value == 'same':
+        dio['app']['rank'] = child.rpl.get_rank()
+    elif fixture_rank_value == 'larger':
+        dio['app']['rank'] = child.rpl.get_rank() + d.RPL_MINHOPRANKINCREASE
+    else:
+        raise NotImplementedError()
+
+    # process the global clock
+    sim_engine.asn += 10
+
+    # give the dio to 'child'
+    child.rpl.action_receiveDIO(dio)
+
+    # see what happened
+    if fixture_rank_value == 'smaller':
+        # the parent should remain in the parent set of the child
+        assert child.rpl.of.parents[0]['mac_addr'] == parent.get_mac_addr()
+    else:
+        # the parent should have been removed from the parent set of the child
+        assert len(child.rpl.of.parents) == 0
+        # the child should send a DIO having INFINITE_RANK
+        logs = u.read_log_file(
+            filter    = [SimLog.LOG_RPL_DIO_TX['type']],
+            after_asn = sim_engine.getAsn() - 1
+        )
+        assert len(logs) == 1
+        assert logs[0]['packet']['app']['rank'] == 65535

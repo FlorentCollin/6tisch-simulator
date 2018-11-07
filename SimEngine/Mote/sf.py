@@ -134,6 +134,9 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
     # === admin
 
     def start(self):
+        # enable the pending bit feature
+        self.mote.tsch.enable_pending_bit()
+
         # install SlotFrame 1 which has the same length as SlotFrame 0
         slotframe_0 = self.mote.tsch.get_slotframe(0)
         self.mote.tsch.add_slotframe(
@@ -228,11 +231,14 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
         # clear all the cells allocated for the old parent
         def _callback(event, packet):
             if event == d.SIXP_CALLBACK_EVENT_FAILURE:
-                # optimization which is not mentioned in 6P/MSF spec:
-                # remove the outstanding transaction because we're deleting all
-                # the cells scheduled to the peer now
+                # optimization which is not mentioned in 6P/MSF spec: remove
+                # the outstanding transaction because we're deleting all the
+                # cells scheduled to the peer now. The outstanding transaction
+                # should have the same transaction key as the packet we were
+                # trying to send.
                 self.mote.sixp.abort_transaction(
-                    sixp.SixPTransaction.get_transaction_key(packet)
+                    initiator_mac_addr=packet['mac']['srcMac'],
+                    responder_mac_addr=packet['mac']['dstMac']
                 )
             self._clear_cells(old_parent)
 
@@ -449,12 +455,9 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
         self._delete_cells(neighbor, src_cell_list, cell_options)
 
     def _create_available_cell_list(self, cell_list_len):
-        slots_in_slotframe    = set(range(0, self.settings.tsch_slotframeLength))
-        slots_in_use          = set(
-            self.mote.tsch.get_busy_slots(self.SLOTFRAME_HANDLE)
-        )
-        available_slots       = list(
-            slots_in_slotframe - slots_in_use - self.locked_slots
+        available_slots = list(
+            set(self.mote.tsch.get_available_slots(self.SLOTFRAME_HANDLE)) -
+            self.locked_slots
         )
 
         if len(available_slots) <= cell_list_len:
@@ -608,16 +611,14 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
         peerMac         = request['mac']['srcMac']
 
         # find available cells in the received CellList
-        slots_in_slotframe = set(range(0, self.settings.tsch_slotframeLength))
-        slots_in_use       = set(
-            self.mote.tsch.get_busy_slots(self.SLOTFRAME_HANDLE)
-        )
         slots_in_cell_list = set(
             map(lambda c: c['slotOffset'], proposed_cells)
         )
-        available_slots    = list(
+        available_slots  = list(
             slots_in_cell_list.intersection(
-                slots_in_slotframe - slots_in_use - self.locked_slots)
+                set(self.mote.tsch.get_available_slots(self.SLOTFRAME_HANDLE)) -
+                self.locked_slots
+            )
         )
 
         # prepare cell_list
@@ -878,6 +879,10 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
             num_relocating_cells  = 0
             cell_list             = []
 
+        # we don't have any cell to relocate; done
+        if len(relocation_cell_list) == 0:
+            return
+
         # prepare candidate_cell_list
         candidate_cell_list = self._create_available_cell_list(
             self.DEFAULT_CELL_LIST_LEN
@@ -974,7 +979,11 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
                 map(lambda c: c['slotOffset'], candidate_cells)
             )
             available_slots    = list(
-                candidate_slots.intersection(slots_in_slotframe - slots_in_use)
+                candidate_slots.intersection(
+                    set(
+                        self.mote.tsch.get_available_slots(self.SLOTFRAME_HANDLE)
+                    )
+                )
             )
 
             # FIXME: handle the case when available_slots is empty

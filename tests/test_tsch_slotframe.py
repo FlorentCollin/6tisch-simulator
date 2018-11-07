@@ -19,8 +19,10 @@ def fixture_neighbor_mac_addr(request):
     return request.param
 
 
-def test_add(fixture_neighbor_mac_addr):
-    slotframe = SlotFrame(101)
+def test_add(sim_engine, fixture_neighbor_mac_addr):
+    sim_engine = sim_engine() # need for log
+
+    slotframe = SlotFrame(None, 1, 101)
     cell = Cell(0, 0, all_options_on, fixture_neighbor_mac_addr)
     slotframe.add(cell)
 
@@ -44,9 +46,11 @@ def test_add(fixture_neighbor_mac_addr):
     )
 
 
-def test_delete_cell():
+def test_delete_cell(sim_engine):
+    sim_engine = sim_engine() # need for log
+
     neighbor_mac_addr = 'test_mac_addr'
-    slotframe = SlotFrame(101)
+    slotframe = SlotFrame(None, 1, 101)
     cell = Cell(0, 0, all_options_on, neighbor_mac_addr)
 
     assert slotframe.get_cells_by_mac_addr(neighbor_mac_addr) == []
@@ -63,8 +67,10 @@ def test_delete_cell():
     assert slotframe.get_cells_by_slot_offset(0) == []
 
 
-def test_add_cells_for_same_mac_addr():
-    slotframe = SlotFrame(101)
+def test_add_cells_for_same_mac_addr(sim_engine):
+    sim_engine = sim_engine() # need for log
+
+    slotframe = SlotFrame(None, 1, 101)
 
     cell_1 = Cell(1, 5, [d.CELLOPTION_TX], 'test_mac_addr_1')
     cell_2 = Cell(51, 10, [d.CELLOPTION_RX], 'test_mac_addr_1')
@@ -81,8 +87,10 @@ def test_add_cells_for_same_mac_addr():
     ]
 
 
-def test_add_cells_at_same_slot_offset():
-    slotframe = SlotFrame(101)
+def test_add_cells_at_same_slot_offset(sim_engine):
+    sim_engine = sim_engine() # need for log
+
+    slotframe = SlotFrame(None, 1, 101)
 
     cell_1 = Cell(1, 5, [d.CELLOPTION_TX], 'test_mac_addr_1')
     cell_2 = Cell(1, 5, [d.CELLOPTION_RX], 'test_mac_addr_2')
@@ -211,8 +219,10 @@ def test_tx_with_two_slotframes(sim_engine):
 @pytest.fixture(params=[0, 1, 10, 101])
 def fixture_num_cells(request):
     return request.param
-def test_print_slotframe(fixture_num_cells):
-    slotframe = SlotFrame(101)
+def test_print_slotframe(sim_engine, fixture_num_cells):
+    sim_engine = sim_engine() # need for log
+
+    slotframe = SlotFrame(None, 1, 101)
     # install cells
     for i in range(fixture_num_cells):
         slot_offset = i
@@ -256,15 +266,17 @@ def test_print_cell(sim_engine, fixture_cell_options, fixture_mac_addr):
     assert 'mac_addr: {0}'.format(mac_addr) in str_cell
     assert 'options: [{0}]'.format(', '.join(fixture_cell_options)) in str_cell
 
-def test_slotframe_get_cells_filtered():
+def test_slotframe_get_cells_filtered(sim_engine):
     """
     Unit test for Slotframe class method slotframe_get_cells_filtered
     Test if we can get the cells filtered by options, MAC address or both
     """
+    sim_engine = sim_engine() # need for log
+
     neighbor_mac_addr_1 = 'test_mac_addr_1'
     neighbor_mac_addr_2 = 'test_mac_addr_2'
     neighbor_mac_addr_3 = None
-    slotframe = SlotFrame(101)
+    slotframe = SlotFrame(None, 1, 101)
 
     # create cells
     cell_tx_1 = Cell(0, 0, [d.CELLOPTION_TX], neighbor_mac_addr_1)
@@ -293,14 +305,16 @@ def test_slotframe_get_cells_filtered():
     assert slotframe.get_cells_filtered(mac_addr=None) == \
            [c for c in cells if c.mac_addr is None]
 
-def test_slotframe_get_available_slot_offsets():
+def test_slotframe_get_available_slots(sim_engine):
     """
-    Unit test for Slotframe class method get_available_slot_offsets
+    Unit test for Slotframe class method get_available_slots
     Test if we can get the list of offsets for slots that are not in use
     """
+    sim_engine = sim_engine() # need for log
+
     neighbor_mac_addr_1 = 'test_mac_addr_1'
     neighbor_mac_addr_2 = 'test_mac_addr_2'
-    slotframe = SlotFrame(101)
+    slotframe = SlotFrame(None, 1, 101)
 
     # create cells
     cell_tx_1 = Cell(0, 0, [d.CELLOPTION_TX], neighbor_mac_addr_1)
@@ -312,4 +326,62 @@ def test_slotframe_get_available_slot_offsets():
         slotframe.add(c)
 
     # check if all slot offsets are returned except the one reserved
-    assert slotframe.get_available_slot_offsets() == [i for i in range(2, 101)]
+    assert slotframe.get_available_slots() == [i for i in range(2, 101)]
+
+def test_slotframe_set_length_without_cells(sim_engine):
+    """
+    Test if we can change the slotframe length when no cells are allocated
+    """
+    sim_engine = sim_engine() # need for log
+
+    slotframe = SlotFrame(None, 1, 101)
+
+    # decrease the slotframe length
+    new_length = 50
+    slotframe.set_length(new_length)
+    assert slotframe.length == new_length
+    assert len(slotframe.slots) == new_length
+
+    # increase the slotframe length
+    new_length = 150
+    slotframe.set_length(new_length)
+    assert slotframe.length == new_length
+    assert len(slotframe.slots) == new_length
+
+def test_slotframe_set_length_with_cells(sim_engine):
+    """
+    Test if we can change the slotframe length when cells are allocated
+    """
+    sim_engine = sim_engine() # need for log
+
+    neighbor_mac_addr_1 = 'test_mac_addr_1'
+    neighbor_mac_addr_2 = 'test_mac_addr_2'
+    slotframe = SlotFrame(None, 1, 101)
+
+    # create cells
+    cell_0  = Cell(0,  0, [d.CELLOPTION_TX], neighbor_mac_addr_1)
+    cell_70 = Cell(70, 0, [d.CELLOPTION_TX], neighbor_mac_addr_2)
+    cells = [cell_0, cell_70]
+
+    # add cells to slotframe
+    for c in cells:
+        slotframe.add(c)
+
+    # decrease the slotframe length
+    assert len(slotframe.get_busy_slots()) == len(cells)
+    new_length = 50
+    slotframe.set_length(new_length)
+    assert slotframe.length == new_length
+    assert len(slotframe.slots) == new_length
+    assert len(slotframe.get_busy_slots()) == len(cells) - 1  # make sure cell is delete
+
+    # make sure we cannot add a cell after new length
+    with pytest.raises(Exception):
+        slotframe.add(cell_70)
+
+    # increase the slotframe length
+    new_length = 150
+    slotframe.set_length(new_length)
+    assert slotframe.length == new_length
+    assert len(slotframe.slots) == new_length
+    assert len(slotframe.get_busy_slots()) == len(cells) - 1  # make sure we have the right amount of cells
