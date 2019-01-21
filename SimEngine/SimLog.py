@@ -85,8 +85,10 @@ LOG_TSCH_TXDONE                   = {'type': 'tsch.txdone',               'keys'
 LOG_TSCH_RXDONE                   = {'type': 'tsch.rxdone',               'keys': ['_mote_id','channel','slot_offset', 'channel_offset', 'packet']}
 LOG_TSCH_BACKOFF_EXPONENT_UPDATED = {'type': 'tsch.be.updated',           'keys': ['_mote_id','old_be', 'new_be']}
 
-# === batt
+# === mote info
 LOG_BATT_CHARGE                   = {'type': 'batt.charge',               'keys': ['_mote_id','charge']}
+LOG_MAC_ADD_ADDR                  = {'type': 'mac.add_addr',              'keys': ['_mote_id', 'type', 'addr']}
+LOG_IPV6_ADD_ADDR                 = {'type': 'ipv6.add_addr',             'keys': ['_mote_id', 'type', 'addr']}
 
 # === propagation
 LOG_PROP_TRANSMISSION             = {'type': 'prop.transmission',         'keys': ['channel','packet']}
@@ -119,26 +121,32 @@ class SimLog(object):
         cls._init = True
         # ==== end singleton
 
-        # get singletons
-        self.settings   = SimSettings.SimSettings()
-        self.engine     = None # will be defined by set_simengine
+        try:
+            # get singletons
+            self.settings   = SimSettings.SimSettings()
+            self.engine     = None # will be defined by set_simengine
 
-        # local variables
-        self.log_filters = []
+            # local variables
+            self.log_filters = []
 
-        # open log file
-        self.log_output_file = open(self.settings.getOutputFile(), 'a')
+            # open log file
+            self.log_output_file = open(self.settings.getOutputFile(), 'a')
 
-        # write config to log file; if a file with the same file name exists,
-        # append logs to the file. this happens if you multiple runs on the
-        # same CPU. And amend config line; config line in log file should have
-        # '_type' field. And 'run_id' type should be '_run_id'
-        config_line = copy.deepcopy(self.settings.__dict__)
-        config_line['_type']   = 'config'
-        config_line['_run_id'] = config_line['run_id']
-        del config_line['run_id']
-        json_string = json.dumps(config_line)
-        self.log_output_file.write(json_string + '\n')
+            # write config to log file; if a file with the same file name exists,
+            # append logs to the file. this happens if you multiple runs on the
+            # same CPU. And amend config line; config line in log file should have
+            # '_type' field. And 'run_id' type should be '_run_id'
+            config_line = copy.deepcopy(self.settings.__dict__)
+            config_line['_type']   = 'config'
+            config_line['_run_id'] = config_line['run_id']
+            del config_line['run_id']
+            json_string = json.dumps(config_line)
+            self.log_output_file.write(json_string + '\n')
+        except:
+            # destroy the singleton
+            cls._instance = None
+            cls._init = False
+            raise
 
     def log(self, simlog, content):
         """
@@ -160,12 +168,19 @@ class SimLog(object):
                 )
             )
 
+        # if self.engine is not available, consider the current time
+        # is ASN 0.
+        if self.engine is None:
+            asn = 0
+        else:
+            asn = self.engine.asn
+
         # update the log content
         content.update(
             {
-                "_asn":       self.engine.asn,
+                "_asn":       asn,
                 "_type":      simlog["type"],
-                "_run_id":    self.engine.run_id
+                "_run_id":    self.settings.run_id
             }
         )
 
