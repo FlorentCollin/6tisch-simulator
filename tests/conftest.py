@@ -12,8 +12,8 @@ import test_utils                 as u
 
 def pdr_not_null(c,p,engine):
     returnVal = False
-    for channel in range(engine.settings.phy_numChans):
-        if engine.connectivity.get_pdr(c.id,p.id,channel)>0:
+    for channel in d.TSCH_HOPPING_SEQUENCE:
+        if engine.connectivity.get_pdr(c.id,p.id,channel) > 0:
             returnVal = True
     return returnVal
 
@@ -31,14 +31,18 @@ def sim_engine(request):
         ):
         
         engine = None
-        
+        sim_log = None
+        sim_settings = None
+
         # add a finalizer
         def fin():
             if engine:
                 engine.connectivity.destroy()
                 engine.destroy()
-            sim_log.destroy()
-            sim_settings.destroy()
+            if sim_log:
+                sim_log.destroy()
+            if sim_settings:
+                sim_settings.destroy()
         request.addfinalizer(fin)
         
         # get default configuration

@@ -34,23 +34,30 @@ class Tsch(object):
         self.log      = SimEngine.SimLog.SimLog().log
 
         # local variables
-        self.slotframes      = {}
-        self.txQueue         = []
-        self.txQueueSize     = self.settings.tsch_tx_queue_size
-        self.neighbor_table  = []
-        self.pktToSend       = None
-        self.waitingFor      = None
-        self.active_cell     = None
-        self.asnLastSync     = None
-        self.isSync          = False
-        self.join_proxy      = None
-        self.iAmSendingEBs   = False
-        self.clock           = Clock(self.mote)
+        self.slotframes       = {}
+        self.txQueue          = []
+        self.txQueueSize      = self.settings.tsch_tx_queue_size
+        self.neighbor_table   = []
+        self.pktToSend        = None
+        self.waitingFor       = None
+        self.active_cell      = None
+        self.asnLastSync      = None
+        self.isSync           = False
+        self.join_proxy       = None
+        self.iAmSendingEBs    = False
+        self.clock            = Clock(self.mote)
+        self.next_seqnum      = 0
+        self.received_eb_list = {} # indexed by source mac address
         # backoff state
         self.backoff_exponent        = d.TSCH_MIN_BACKOFF_EXPONENT
         # pending bit
         self.pending_bit_enabled            = False
         self.args_for_next_pending_bit_task = None
+
+        assert self.settings.phy_numChans <= len(d.TSCH_HOPPING_SEQUENCE)
+        self.hopping_sequence = (
+            d.TSCH_HOPPING_SEQUENCE[:self.settings.phy_numChans]
+        )
 
         # install the default slotframe
         self.add_slotframe(
@@ -129,9 +136,16 @@ class Tsch(object):
                 return cell
         return None
 
-    def get_cells(self, mac_addr=None, slotframe_handle=0):
-        slotframe = self.slotframes[slotframe_handle]
-        return slotframe.get_cells_by_mac_addr(mac_addr)
+    def get_cells(self, mac_addr=None, slotframe_handle=None):
+        if slotframe_handle:
+            slotframe = self.slotframes[slotframe_handle]
+            ret_val = slotframe.get_cells_by_mac_addr(mac_addr)
+        else:
+            ret_val = []
+            for slotframe_handle in self.slotframes:
+                slotframe = self.slotframes[slotframe_handle]
+                ret_val += slotframe.get_cells_by_mac_addr(mac_addr)
+        return ret_val
 
     def enable_pending_bit(self):
         self.pending_bit_enabled = True
@@ -150,9 +164,25 @@ class Tsch(object):
             slotframe_handle = slotframe_handle,
             num_slots        = length
         )
+        self.log(
+            SimEngine.SimLog.LOG_TSCH_ADD_SLOTFRAME,
+            {
+                "_mote_id"       : self.mote.id,
+                'slotFrameHandle': slotframe_handle,
+                'length'         : length
+            }
+        )
 
     def delete_slotframe(self, slotframe_handle):
         assert slotframe_handle in self.slotframes
+        self.log(
+            SimEngine.SimLog.LOG_TSCH_DELETE_SLOTFRAME,
+            {
+                "_mote_id"       : self.mote.id,
+                'slotFrameHandle': slotframe_handle,
+                'length'         : self.slotframes[slotframe_handle].length
+            }
+        )
         del self.slotframes[slotframe_handle]
 
     # EB / Enhanced Beacon
@@ -190,7 +220,8 @@ class Tsch(object):
                 d.CELLOPTION_RX,
                 d.CELLOPTION_SHARED
             ],
-            slotframe_handle = 0
+            slotframe_handle = 0,
+            isAdvertising    = True
         )
 
     def delete_minimal_cell(self):
@@ -209,7 +240,15 @@ class Tsch(object):
 
     # schedule interface
 
-    def addCell(self, slotOffset, channelOffset, neighbor, cellOptions, slotframe_handle=0):
+    def addCell(
+            self,
+            slotOffset,
+            channelOffset,
+            neighbor,
+            cellOptions,
+            slotframe_handle=0,
+            isAdvertising=False
+        ):
 
         assert isinstance(slotOffset, int)
         assert isinstance(channelOffset, int)
@@ -218,7 +257,13 @@ class Tsch(object):
         slotframe = self.slotframes[slotframe_handle]
 
         # add cell
-        cell = Cell(slotOffset, channelOffset, cellOptions, neighbor)
+        cell = Cell(
+            slotOffset,
+            channelOffset,
+            cellOptions,
+            neighbor,
+            isAdvertising
+        )
         slotframe.add(cell)
 
         # reschedule the next active cell, in case it is now earlier
@@ -256,22 +301,27 @@ class Tsch(object):
         goOn = True
 
         # check there is space in txQueue
-        if goOn:
-            if (
+        if (
+                goOn
+                and
+                (len(self.txQueue) >= self.txQueueSize)
+                and
+                (
                     (priority is False)
-                    and
-                    (len(self.txQueue) >= self.txQueueSize)
-                ):
-                # my TX queue is full
-
-                # drop
-                self.mote.drop_packet(
-                    packet  = packet,
-                    reason  = SimEngine.SimLog.DROPREASON_TXQUEUE_FULL,
+                    or
+                    self.txQueue[-1]['mac']['priority']
                 )
+            ):
+            # my TX queue is full
 
-                # couldn't enqueue
-                goOn = False
+            # drop
+            self.mote.drop_packet(
+                packet  = packet,
+                reason  = SimEngine.SimLog.DROPREASON_TXQUEUE_FULL
+            )
+
+            # couldn't enqueue
+            goOn = False
 
         # check that I have cell to transmit on
         if goOn:
@@ -303,9 +353,34 @@ class Tsch(object):
         if goOn:
             # set retriesLeft which should be renewed at every hop
             packet['mac']['retriesLeft'] = d.TSCH_MAXTXRETRIES
+            # put the seqnum
+            packet['mac']['seqnum'] = self.next_seqnum
+            self.next_seqnum += 1
+            if self.next_seqnum > 255:
+                # sequence number field is 8-bit long
+                self.next_seqnum = 0
             if priority:
-                self.txQueue.insert(0, packet)
+                # mark priority to this packet
+                packet['mac']['priority'] = True
+                # if the queue is full, we need to drop the last one
+                # in the queue or the new packet
+                if len(self.txQueue) == self.txQueueSize:
+                    assert not self.txQueue[-1]['mac']['priority']
+                    # drop the last one in the queue
+                    packet_to_drop = self.txQueue[-1]
+                    self.dequeue(packet_to_drop)
+                    self.mote.drop_packet(
+                        packet = packet_to_drop,
+                        reason  = SimEngine.SimLog.DROPREASON_TXQUEUE_FULL
+                    )
+                index = len(self.txQueue)
+                for i, _ in enumerate(self.txQueue):
+                    if self.txQueue[i]['mac']['priority'] is False:
+                        index = i
+                        break
+                self.txQueue.insert(index, packet)
             else:
+                packet['mac']['priority'] = False
                 # add to txQueue
                 self.txQueue    += [packet]
 
@@ -387,24 +462,6 @@ class Tsch(object):
                 del self.txQueue[i]
             else:
                 i += 1
-
-    def remove_tx_packet(self, packet):
-        """remove a specific TX packet in the queue"""
-        target_packet_index = None
-
-        for i in range(len(self.txQueue)):
-            tx_packet_copy = copy.deepcopy(self.txQueue[i])
-
-            # remove retriesLeft element for comparison
-            del tx_packet_copy['mac']['retriesLeft']
-
-            if tx_packet_copy == packet:
-                target_packet_index = i
-                break
-
-        if target_packet_index is not None:
-            del self.txQueue[target_packet_index]
-
 
     # interface with radio
 
@@ -670,18 +727,47 @@ class Tsch(object):
         assert not self.getIsSync()
 
         # choose random channel
-        channel = random.randint(0, self.settings.phy_numChans-1)
+        channel = random.choice(self.hopping_sequence)
 
         # start listening
-        self.mote.radio.startRx(
-            channel = channel,
-        )
+        self.mote.radio.startRx(channel)
 
         # indicate that we're waiting for the RX operation to finish
         self.waitingFor = d.WAITING_FOR_RX
 
         # schedule next listeningForEB cell
         self.schedule_next_listeningForEB_cell()
+
+    def _perform_synchronization(self):
+        assert self.received_eb_list
+
+        # [Section 6.3.6, IEEE802.15.4-2015]
+        # The higher layer may wait for additional
+        # MLME-BEACON-NOTIFY.indication primitives before selecting a
+        # TSCH network based upon the value of the Join Metric field
+        # in the TSCH Synchronization IE. (snip)
+        #
+        # NOTE- lower value in the Join Metric field indicates that
+        # connection of the beaconing device to a specific network
+        # device determined by the higher layer is a shorter route.
+        clock_source_mac_addr = min(
+            self.received_eb_list,
+            key=lambda x: self.received_eb_list[x]['mac']['join_metric']
+        )
+        self.clock.sync(clock_source_mac_addr)
+        self.setIsSync(True) # mote
+
+        # the mote that sent the EB is now by join proxy
+        self.join_proxy = netaddr.EUI(clock_source_mac_addr)
+
+        # add the minimal cell to the schedule (read from EB)
+        self.add_minimal_cell() # mote
+
+        # trigger join process
+        self.mote.secjoin.startJoinProcess()
+
+        # clear the EB list
+        self.received_eb_list = {}
 
     # active cell
 
@@ -705,7 +791,24 @@ class Tsch(object):
 
                     # take care of the retransmission backoff algorithm
                     if _packet_to_send is not None:
-                        if (
+                        if _packet_to_send['type'] == d.PKT_TYPE_EB:
+                            if (
+                                    (
+                                        (cell.mac_addr is None)
+                                        or
+                                        (cell.mac_addr == d.BROADCAST_ADDRESS)
+                                    )
+                                    and
+                                    (cell.link_type == d.LINKTYPE_ADVERTISING)
+                                ):
+                                # we can send the EB on this link (cell)
+                                packet_to_send = _packet_to_send
+                                active_cell = cell
+                            else:
+                                # we don't send an EB on a NORMAL
+                                # link; skip this one
+                                pass
+                        elif (
                             cell.is_shared_on()
                             and
                             self._is_retransmission(_packet_to_send)
@@ -882,18 +985,10 @@ class Tsch(object):
         self.waitingFor = d.WAITING_FOR_RX
 
     def _get_physical_channel(self, cell):
-        # apply the default channel hopping sequence only if the phy_numChans
-        # is equal to the length of the sequence
-        if self.settings.phy_numChans == len(d.TSCH_HOPPING_SEQUENCE):
-            hopping_sequence = d.TSCH_HOPPING_SEQUENCE[:self.settings.phy_numChans]
-        else:
-            assert self.settings.phy_numChans > 0
-            hopping_sequence = range(self.settings.phy_numChans)
-
         # see section 6.2.6.3 of IEEE 802.15.4-2015
-        return hopping_sequence[
+        return self.hopping_sequence[
             (self.engine.getAsn() + cell.channel_offset) %
-            len(hopping_sequence)
+            len(self.hopping_sequence)
         ]
 
     # EBs
@@ -919,13 +1014,11 @@ class Tsch(object):
             # create
             newEB = {
                 'type':            d.PKT_TYPE_EB,
-                'app': {
-                    'join_metric': self.mote.rpl.getDagRank() - 1,
-                },
                 'mac': {
                     'srcMac':      self.mote.get_mac_addr(),
                     'dstMac':      d.BROADCAST_ADDRESS,     # broadcast
-                },
+                    'join_metric': self.mote.rpl.getDagRank() - 1
+                }
             }
 
             # log
@@ -957,20 +1050,25 @@ class Tsch(object):
             return
 
         if not self.getIsSync():
+            event_tag = (self.mote.id, 'tsch', 'wait_eb')
+            if not self.received_eb_list:
+                # start the timer to wait for other EBs if this is the
+                # first received EB
+                self.engine.scheduleIn(
+                    delay          = d.TSCH_MAX_EB_DELAY,
+                    cb             = self._perform_synchronization,
+                    uniqueTag      = event_tag,
+                    intraSlotOrder = d.INTRASLOTORDER_STACKTASKS
+                )
+            # add the EB to the list. If there is an EB from the
+            # the source, the EB is replaced by the new one
+            self.received_eb_list[packet['mac']['srcMac']] = packet
             # receiving EB while not sync'ed
-
-            # I'm now sync'ed!
-            self.clock.sync(packet['mac']['srcMac'])
-            self.setIsSync(True) # mote
-
-            # the mote that sent the EB is now by join proxy
-            self.join_proxy = netaddr.EUI(packet['mac']['srcMac'])
-
-            # add the minimal cell to the schedule (read from EB)
-            self.add_minimal_cell() # mote
-
-            # trigger join process
-            self.mote.secjoin.startJoinProcess()
+            if len(self.received_eb_list) == d.TSCH_NUM_NEIGHBORS_TO_WAIT:
+                self._perform_synchronization()
+                self.engine.removeFutureEvent(event_tag)
+            else:
+                assert len(self.received_eb_list) < d.TSCH_NUM_NEIGHBORS_TO_WAIT
 
     # Retransmission backoff algorithm
     def _is_retransmission(self, packet):
@@ -1482,10 +1580,14 @@ class Cell(object):
                     'slot_offset: {0}'.format(self.slot_offset),
                     'channel_offset: {0}'.format(self.channel_offset),
                     'mac_addr: {0}'.format(self.mac_addr),
-                    'options: [{0}]'.format(', '.join(self.options))
+                    'options: [{0}]'.format(', '.join(self.options)),
+                    'link_type: {0}'.format(self.link_type)
                 ]
             )
         )
+
+    def __eq__(self, other):
+        return str(self) == str(other)
 
     def increment_num_tx(self):
         self.num_tx += 1

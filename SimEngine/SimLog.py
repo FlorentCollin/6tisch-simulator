@@ -84,6 +84,8 @@ LOG_TSCH_DELETE_CELL              = {'type': 'tsch.delete_cell',          'keys'
 LOG_TSCH_TXDONE                   = {'type': 'tsch.txdone',               'keys': ['_mote_id','channel','slot_offset', 'channel_offset', 'packet','isACKed']}
 LOG_TSCH_RXDONE                   = {'type': 'tsch.rxdone',               'keys': ['_mote_id','channel','slot_offset', 'channel_offset', 'packet']}
 LOG_TSCH_BACKOFF_EXPONENT_UPDATED = {'type': 'tsch.be.updated',           'keys': ['_mote_id','old_be', 'new_be']}
+LOG_TSCH_ADD_SLOTFRAME            = {'type': 'tsch.add_slotframe',        'keys': ['_mote_id','slotFrameHandle','length']}
+LOG_TSCH_DELETE_SLOTFRAME         = {'type': 'tsch.delete_slotframe',     'keys': ['_mote_id','slotFrameHandle','length']}
 
 # === mote info
 LOG_BATT_CHARGE                   = {'type': 'batt.charge',               'keys': ['_mote_id','charge']}
@@ -94,6 +96,9 @@ LOG_IPV6_ADD_ADDR                 = {'type': 'ipv6.add_addr',             'keys'
 LOG_PROP_TRANSMISSION             = {'type': 'prop.transmission',         'keys': ['channel','packet']}
 LOG_PROP_INTERFERENCE             = {'type': 'prop.interference',         'keys': ['_mote_id','channel','lockon_transmission','interfering_transmissions']}
 LOG_PROP_DROP_LOCKON              = {'type': 'prop.drop_lockon' ,         'keys': ['_mote_id','channel','lockon_transmission']}
+
+# === connectivity matrix
+LOG_CONN_MATRIX_K7_UPDATE         = {'type': 'conn.matrix.update',        'keys': ['start_trace_position', 'end_trace_position', 'asn_of_next_update']}
 
 # ============================ SimLog =========================================
 
