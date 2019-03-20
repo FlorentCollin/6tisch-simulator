@@ -6,15 +6,17 @@ references:
 - IETF RFC 8180
 
 note:
-- global/local repair is not supported
+- global repair is not supported
 """
 
 # =========================== imports =========================================
 
 import random
 import math
+import sys
 
 import netaddr
+import numpy
 
 # Mote sub-modules
 
@@ -50,7 +52,7 @@ class Rpl(object):
 
         # local variables
         self.dodagId                   = None
-        self.of                        = RplOF0(self)
+        self.of                        = RplOFNone(self)
         self.trickle_timer             = TrickleTimer(
             i_min    = pow(2, self.DEFAULT_DIO_INTERVAL_MIN),
             i_max    = self.DEFAULT_DIO_INTERVAL_DOUBLINGS,
@@ -89,13 +91,16 @@ class Rpl(object):
     def start(self):
         if self.mote.dagRoot:
             self.dodagId = self.mote.get_ipv6_global_addr()
-            self.of = RplOFNone(self)
             self.of.set_rank(d.RPL_MINHOPRANKINCREASE)
             self.trickle_timer.start()
             # now start a new RPL instance; reset the timer as per Section 8.3 of
             # RFC 6550
             self.trickle_timer.reset()
         else:
+            if self.settings.rpl_of:
+                # update OF with one specified in config.json
+                of_class  = 'Rpl{0}'.format(self.settings.rpl_of)
+                self.of = getattr(sys.modules[__name__], of_class)(self)
             if self.dis_mode != 'disabled':
                 # the destination address of the first DIS is determined based
                 # on self.dis_mode
@@ -123,19 +128,39 @@ class Rpl(object):
             }
         )
 
-        # trigger DAO
-        self._schedule_sendDAO(firstDAO=True)
+        if new_preferred is None:
+            assert old_preferred
+            # stop the DAO timer
+            self._stop_sendDAO()
 
-        # use the new parent as our clock source
-        self.mote.tsch.clock.sync(new_preferred)
+            # don't change the clock source
+
+            # trigger a DIO which advertises infinite rank
+            self._send_DIO()
+
+            # stop the trickle timer
+            self.trickle_timer.stop()
+
+            # stop the EB transmission
+            self.mote.tsch.stopSendingEBs()
+
+            # start the DIS timer
+            self.start_dis_timer()
+        else:
+            # trigger DAO
+            self._schedule_sendDAO(firstDAO=True)
+
+            # use the new parent as our clock source
+            self.mote.tsch.clock.sync(new_preferred)
+
+            # reset trickle timer to inform new rank quickly
+            self.trickle_timer.reset()
 
         # trigger 6P ADD if parent changed
         self.mote.sf.indication_parent_change(old_preferred, new_preferred)
 
-        # reset trickle timer to inform new rank quickly
-        self.trickle_timer.reset()
-
     def local_repair(self):
+        self.of.reset()
         assert (
             (self.of.rank is None)
             or
@@ -147,12 +172,7 @@ class Rpl(object):
                 "_mote_id":        self.mote.id
             }
         )
-        self._send_DIO() # sending a DIO with the infinite rank
         self.dodagId = None
-        self.trickle_timer.stop()
-        self.mote.tsch.stopSendingEBs()
-        # start the DIS timer
-        self.start_dis_timer()
 
     # === DIS
 
@@ -362,6 +382,9 @@ class Rpl(object):
             intraSlotOrder   = d.INTRASLOTORDER_STACKTASKS,
         )
 
+    def _stop_sendDAO(self):
+        self.engine.removeFutureEvent((self.mote.id, '_action_sendDAO'))
+
     def _action_sendDAO(self):
         """
         Enqueue a DAO and schedule next one.
@@ -389,7 +412,10 @@ class Rpl(object):
         """
 
         assert not self.mote.dagRoot
-        assert self.dodagId!=None
+
+        if self.dodagId is None:
+            # seems we've lost all the candidate parents; do nothing
+            return
 
         # abort if not ready yet
         if self.mote.clear_to_send_EBs_DATA()==False:
@@ -475,32 +501,43 @@ class Rpl(object):
         return returnVal
 
 
-class RplOFNone(object):
-
+class RplOFBase(object):
     def __init__(self, rpl):
         self.rpl = rpl
         self.rank = None
         self.preferred_parent = None
 
+    def reset(self):
+        self.rank = None
+        old_parent_mac_addr = self.get_preferred_parent()
+        self.preferred_parent = None
+        self.rpl.indicate_preferred_parent_change(
+            old_preferred = old_parent_mac_addr,
+            new_preferred = None
+        )
+
     def update(self, dio):
-        # do nothing on the root
         pass
 
+    def update_etx(self, cell, mac_addr, isACKed):
+        pass
+
+    def get_preferred_parent(self):
+        return self.preferred_parent
+
+    def poison_rpl_parent(self, mac_addr):
+        pass
+
+
+class RplOFNone(RplOFBase):
     def set_rank(self, new_rank):
         self.rank = new_rank
 
     def set_preferred_parent(self, new_preferred_parent):
         self.preferred_parent = new_preferred_parent
 
-    def get_preferred_parent(self):
-        return self.preferred_parent
 
-    def update_etx(self, cell, mac_addr, isACKed):
-        # do nothing
-        pass
-
-
-class RplOF0(object):
+class RplOF0(RplOFBase):
 
     # Constants defined in RFC 6550
     INFINITE_RANK = 65535
@@ -511,7 +548,7 @@ class RplOF0(object):
     MAXIMUM_STEP_OF_RANK = 9
 
     # Custom constants
-    MAX_NUM_OF_CONSECUTIVE_FAILURES_WITHOUT_ACK = 10
+    MAX_NUM_OF_CONSECUTIVE_FAILURES_WITHOUT_SUCCESS = 10
     ETX_DEFAULT = UPPER_LIMIT_OF_ACCEPTABLE_ETX
     # if we have a "good" link to the parent, stay with the parent even if the
     # rank of the parent is worse than the best neighbor by more than
@@ -521,12 +558,12 @@ class RplOF0(object):
     PARENT_SWITCH_RANK_INCREASE_THRESHOLD = (
         ((3 * ETX_GOOD_LINK) - 2) * d.RPL_MINHOPRANKINCREASE
     )
+    # The number of transmissions that is needed for ETX calculation
+    ETX_NUM_TX_CUTOFF = 100
 
     def __init__(self, rpl):
-        self.rpl = rpl
+        super(RplOF0, self).__init__(rpl)
         self.neighbors = []
-        self.rank = None
-        self.preferred_parent = None
 
     @property
     def parents(self):
@@ -551,6 +588,10 @@ class RplOF0(object):
                 _parents.append(neighbor)
 
         return _parents
+
+    def reset(self):
+        self.neighbors = []
+        super(RplOF0, self).reset()
 
     def update(self, dio):
         mac_addr = dio['mac']['srcMac']
@@ -580,23 +621,57 @@ class RplOF0(object):
         else:
             return self.preferred_parent['mac_addr']
 
+    def poison_rpl_parent(self, mac_addr):
+        if mac_addr is None:
+            neighbor = None
+        else:
+            neighbor = self._find_neighbor(mac_addr)
+
+        if neighbor:
+            self._update_neighbor_rank(neighbor, d.RPL_INFINITE_RANK)
+            self.rank = None
+            self._update_preferred_parent()
+
     def update_etx(self, cell, mac_addr, isACKed):
+        assert mac_addr != d.BROADCAST_ADDRESS
+        assert d.CELLOPTION_TX in cell.options
+
         neighbor = self._find_neighbor(mac_addr)
         if neighbor is None:
             # we've not received DIOs from this neighbor; ignore the neighbor
             return
+
+        if cell.mac_addr is None:
+            # we calculate ETX only on dedicated cells
+            # XXX: Although it'd be better to exclude cells having
+            # SHARED bit on as well, this is not good for the
+            # autonomous cell defined by MSF.
+            return
+
+        neighbor['numTx'] += 1
+        if isACKed is True:
+            neighbor['numTxAck'] += 1
+
+        if neighbor['numTx'] >= self.ETX_NUM_TX_CUTOFF:
+            # update ETX
+            assert neighbor['numTxAck'] > 0
+            neighbor['etx'] = float(neighbor['numTx']) / neighbor['numTxAck']
+            # reset counters
+            neighbor['numTx'] = 0
+            neighbor['numTxAck'] = 0
         elif (
-                (cell.mac_addr == mac_addr)
+                (neighbor['numTxAck'] == 0)
                 and
-                (d.CELLOPTION_TX in cell.options)
-                and
-                (d.CELLOPTION_SHARED not in cell.options)
+                (
+                    self.MAX_NUM_OF_CONSECUTIVE_FAILURES_WITHOUT_SUCCESS <=
+                    neighbor['numTx']
+                )
             ):
-            neighbor['numTx'] += 1
-            if isACKed is True:
-                neighbor['numTxAck'] += 1
-            self._update_neighbor_rank_increase(neighbor)
-            self._update_preferred_parent()
+            # set invalid ETX
+            neighbor['etx'] = self.UPPER_LIMIT_OF_ACCEPTABLE_ETX + 1
+
+        self._update_neighbor_rank_increase(neighbor)
+        self._update_preferred_parent()
 
     def _add_neighbor(self, mac_addr):
         assert self._find_neighbor(mac_addr) is None
@@ -606,7 +681,8 @@ class RplOF0(object):
             'advertised_rank': None,
             'rank_increase': None,
             'numTx': 0,
-            'numTxAck': 0
+            'numTxAck': 0,
+            'etx': self.ETX_DEFAULT
         }
         self.neighbors.append(neighbor)
         self._update_neighbor_rank_increase(neighbor)
@@ -622,22 +698,12 @@ class RplOF0(object):
         neighbor['advertised_rank'] = new_advertised_rank
 
     def _update_neighbor_rank_increase(self, neighbor):
-        if neighbor['numTxAck'] == 0:
-            if neighbor['numTx'] > self.MAX_NUM_OF_CONSECUTIVE_FAILURES_WITHOUT_ACK:
-                etx = self.UPPER_LIMIT_OF_ACCEPTABLE_ETX + 1 # set invalid ETX
-            else:
-                # ETX is not available
-                etx = None
-        else:
-            etx = float(neighbor['numTx']) / neighbor['numTxAck']
-
-        if etx is None:
-            etx = self.ETX_DEFAULT
-
-        if etx > self.UPPER_LIMIT_OF_ACCEPTABLE_ETX:
+        if neighbor['etx'] > self.UPPER_LIMIT_OF_ACCEPTABLE_ETX:
             step_of_rank = None
         else:
-            step_of_rank = (3 * etx) - 2
+            # step_of_rank is strictly positive integer as per RFC6552
+            step_of_rank = int((3 * neighbor['etx']) - 2)
+
         if step_of_rank is None:
             # this neighbor will not be considered as a parent
             neighbor['rank_increase'] = None
@@ -762,15 +828,243 @@ class RplOF0(object):
                 and
                 (self.preferred_parent is not None)
             ):
-            old_parent_mac_addr = self.preferred_parent['mac_addr']
-            self.neighbors = []
-            self.preferred_parent = None
-            self.rank = None
-            self.rpl.indicate_preferred_parent_change(
-                old_preferred = old_parent_mac_addr,
-                new_preferred = None
-            )
             self.rpl.local_repair()
         else:
             # do nothing
             pass
+
+
+class RplOFBestLinkPDR(RplOF0):
+    INVALID_RSSI_VALUE = -1000
+    NONE_PREFERRED_PARENT = {
+        'mac_addr': None,
+        'mote_id': None,
+        'rank': d.RPL_INFINITE_RANK,
+        'mean_link_pdr': 0,
+        'mean_link_rssi': INVALID_RSSI_VALUE
+    }
+
+    def __init__(self, rpl):
+        super(RplOFBestLinkPDR, self).__init__(rpl)
+        self.preferred_parent = self.NONE_PREFERRED_PARENT
+        self.neighbors = []
+        self.path_pdr = 0
+
+        # short hand
+        self.mote = self.rpl.mote
+        self.engine = self.rpl.engine
+        self.connectivity = self.engine.connectivity
+
+    @property
+    def parents(self):
+        # return neighbors which don't have us on their paths to the
+        # root
+        ret_val = []
+        for neighbor in self.neighbors:
+            parent_mote = self.engine.motes[neighbor['mote_id']]
+            while parent_mote.dagRoot is False:
+                assert parent_mote.rpl.of.preferred_parent
+                parent_id = parent_mote.rpl.of.preferred_parent['mote_id']
+
+                if (
+                        (parent_id is None)
+                        or
+                        (parent_id == self.mote.id)
+                    ):
+                    # this mote doesn't have parent. OR we will make a
+                    # routing loop if we select this neighbor as our
+                    # preferred parent.
+                    parent_mote = None
+                    break
+
+                parent_mote = self.engine.motes[parent_id]
+
+            if parent_mote:
+                ret_val.append(neighbor)
+        return ret_val
+
+    def reset(self):
+        super(RplOFBestLinkPDR, self).reset()
+        self.preferred_parent = self.NONE_PREFERRED_PARENT
+        self.neighbors = []
+
+    def update(self, dio):
+        # short-hand
+        src_mac = dio['mac']['srcMac']
+
+        # update the 'parent' associated with the source MAC address
+        neighbor = self._find_neighbor(src_mac)
+        if dio['app']['rank'] == d.RPL_INFINITE_RANK:
+            if neighbor is None:
+                # do nothing
+                pass
+            else:
+                # remove the neighbor advertising the infinite rank
+                self.neighbors.remove(neighbor)
+        else:
+            if neighbor is None:
+                # add a new neighbor entry
+                neighbor = {
+                    'mac_addr': src_mac,
+                    'mote_id': self._find_mote_id(src_mac),
+                    'rank': None,
+                    'mean_link_pdr': 0
+                }
+                self.neighbors.append(neighbor)
+
+            # update the advertised rank and path ETX
+            neighbor['rank'] = dio['app']['rank']
+
+        # update the PDR values
+        self._update_link_quality_of_neighbors()
+
+        # select the best neighbor the link to whom is the heighest PDR
+        self._update_preferred_parent()
+
+    def poison_rpl_parent(self, mac_addr):
+        neighbor = self._find_neighbor(mac_addr)
+        if neighbor is not None:
+            neighbor['rank'] = d.RPL_INFINITE_RANK
+        self._update_preferred_parent()
+        # send a broadcast DIS to collect neighbors which we've not
+        # noticed
+        self.rpl.send_DIS(d.IPV6_ALL_RPL_NODES_ADDRESS)
+
+    def update_etx(self, cell, mac_addr, isACKed):
+        # check the current PDR and RSSI values of the links to our
+        # parents
+        self._update_link_quality_of_neighbors()
+
+        # update the preferred parent if necessary
+        self._update_preferred_parent()
+
+    @staticmethod
+    def _calculate_rank(neighbor):
+        # calculate ETX by inverting the path PDR and apply it to the
+        # fomula defined by RFC8180 for OF0
+        if (
+                (neighbor['rank'] == d.RPL_INFINITE_RANK)
+                or
+                (neighbor['mean_link_pdr'] == 0)
+            ):
+            rank = d.RPL_INFINITE_RANK
+        else:
+            etx = 1 / neighbor['mean_link_pdr']
+            step_of_rank = int(3 * etx - 2)
+            rank_increase = step_of_rank * d.RPL_MINHOPRANKINCREASE
+            rank = neighbor['rank'] + rank_increase
+        return rank
+
+    def _find_neighbor(self, mac_addr):
+        ret_val = None
+        for neighbor in self.neighbors:
+            if neighbor['mac_addr'] == mac_addr:
+                ret_val = neighbor
+                break
+        return ret_val
+
+    def _find_mote_id(self, mac_addr):
+        mote_id = None
+        for mote in self.engine.motes:
+            if mote.is_my_mac_addr(mac_addr):
+                mote_id = mote.id
+                break
+        assert mote_id is not None
+        return mote_id
+
+    def _update_link_quality_of_neighbors(self):
+        for neighbor in self.neighbors:
+            self._update_mean_link_pdr(neighbor)
+            self._update_mean_link_rssi(neighbor)
+
+    def _update_preferred_parent(self):
+        if self.parents:
+            new_preferred_parent = self._find_best_parent()
+            new_rank = self._calculate_rank(new_preferred_parent)
+        else:
+            new_preferred_parent = self.NONE_PREFERRED_PARENT
+            new_rank = d.RPL_INFINITE_RANK
+
+        if (
+                (new_preferred_parent != self.NONE_PREFERRED_PARENT)
+                and
+                (new_rank == d.RPL_INFINITE_RANK)
+                and
+                (self.preferred_parent != self.NONE_PREFERRED_PARENT)
+            ):
+            # we have only a parent having a bad rank or bad PDR; set
+            # None to new_preferred_parent in order to trigger parent
+            # switch
+            new_preferred_parent = self.NONE_PREFERRED_PARENT
+
+        if new_preferred_parent != self.preferred_parent:
+            if (
+                    (new_preferred_parent == self.NONE_PREFERRED_PARENT)
+                    or
+                    (
+                        d.RPL_PARENT_SWITCH_RANK_THRESHOLD <
+                        (self._calculate_rank(self.preferred_parent) - new_rank)
+                    )
+                ):
+                # we're going to swith to the new parent, which may be
+                # NONE_PREFERRED_PARENT
+                old_preferred_parent = self.preferred_parent
+                self.preferred_parent = new_preferred_parent
+                self.rank = self._calculate_rank(new_preferred_parent)
+                self.rpl.indicate_preferred_parent_change(
+                    old_preferred_parent['mac_addr'],
+                    new_preferred_parent['mac_addr']
+                )
+
+                if (
+                        (
+                            self._calculate_rank(old_preferred_parent) ==
+                            d.RPL_INFINITE_RANK
+                        )
+                        and
+                        (old_preferred_parent in self.neighbors)
+                    ):
+                    # this neighbor should have been poisoned; remove
+                    # this one from our neighbor list
+                    self.neighbors.remove(old_preferred_parent)
+
+    def _update_mean_link_pdr(self, neighbor):
+        # we will calculate the mean PDR value over all the available
+        # channels and both of the directions
+        neighbor['mean_link_pdr'] = numpy.mean([
+            self.connectivity.get_pdr(src_id, dst_id, channel)
+            for channel in self.mote.tsch.hopping_sequence
+            for src_id, dst_id in [
+                (self.mote.id, neighbor['mote_id']),
+                (neighbor['mote_id'], self.mote.id)
+            ]
+        ])
+
+    def _update_mean_link_rssi(self, neighbor):
+        # we will calculate the mean RSSI value over all the available
+        # channels.
+        neighbor['mean_link_rssi'] = numpy.mean([
+            self.connectivity.get_rssi(
+                src_id = self.mote.id,
+                dst_id = neighbor['mote_id'],
+                channel = channel
+            )
+            for channel in self.mote.tsch.hopping_sequence
+        ])
+
+    def _find_best_parent(self):
+        # find a parent which brings the best rank for us. use mote_id
+        # for a tie-breaker.
+
+        # sort the neighbors
+        self.neighbors = sorted(
+            self.neighbors,
+            key=lambda e: (
+                self._calculate_rank(e),
+                e['mean_link_rssi'],
+                e['mote_id']
+            )
+        )
+
+        # then return the first neighbor in "parents"
+        return self.parents[0]

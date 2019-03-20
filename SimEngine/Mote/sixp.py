@@ -31,16 +31,16 @@ class SixP(object):
     def __init__(self, mote):
 
         # store params
-        self.mote                  = mote
+        self.mote              = mote
 
         # singletons (quicker access, instead of recreating every time)
-        self.engine                = SimEngine.SimEngine.SimEngine()
-        self.settings              = SimEngine.SimSettings.SimSettings()
-        self.log                   = SimEngine.SimLog.SimLog().log
+        self.engine            = SimEngine.SimEngine.SimEngine()
+        self.settings          = SimEngine.SimSettings.SimSettings()
+        self.log               = SimEngine.SimLog.SimLog().log
 
         # local variables
-        self.seqnum_table          = {} # indexed by neighbor_id
-        self.transaction_table     = {} # indexed by [initiator, responder]
+        self.seqnum_table      = {} # indexed by neighbor_id
+        self.transaction_table = {} # indexed by [initiator, responder]
 
     # ======================= public ==========================================
 
@@ -97,8 +97,8 @@ class SixP(object):
 
             # invoke callback
             transaction.invoke_callback(
-                event       = d.SIXP_CALLBACK_EVENT_MAC_ACK_RECEPTION,
-                packet      = packet
+                event  = d.SIXP_CALLBACK_EVENT_MAC_ACK_RECEPTION,
+                packet = packet
             )
         else:
             # do nothing
@@ -118,7 +118,7 @@ class SixP(object):
             maxNumCells        = None,
             payload            = None,
             callback           = None,
-            timeout_value      = None
+            timeout_seconds    = None
         ):
 
         # create a packet
@@ -148,7 +148,7 @@ class SixP(object):
             )
         else:
             # ready to send the packet
-            transaction.start(callback, timeout_value)
+            transaction.start(callback, timeout_seconds)
 
             # reset the next sequence number for the peer to 0 when the request
             # is CLEAR
@@ -158,16 +158,20 @@ class SixP(object):
             # enqueue
             self._tsch_enqueue(packet)
 
+            # update transaction using the packet that has a valid
+            # seqnum in the MAC header
+            transaction.request = copy.deepcopy(packet)
+
     def send_response(
             self,
             dstMac,
             return_code,
-            seqNum        = None,
-            numCells      = None,
-            cellList      = None,
-            payload       = None,
-            callback      = None,
-            timeout_value = None
+            seqNum          = None,
+            numCells        = None,
+            cellList        = None,
+            payload         = None,
+            callback        = None,
+            timeout_seconds = None
         ):
 
         packet = self._create_packet(
@@ -184,7 +188,7 @@ class SixP(object):
         # for the response.
         if seqNum is not None:
             # do nothing
-            pass
+            transaction = None
         else:
             # update the transaction
             transaction = self._find_transaction(packet)
@@ -192,14 +196,14 @@ class SixP(object):
 
             # A corresponding transaction instance is supposed to be created
             # when it receives the request. its timer is restarted with the
-            # specified callback and timeout_value now.
-            transaction.start(callback, timeout_value)
-
-            # keep the response packet in case of abortion
-            transaction.response = copy.deepcopy(packet)
+            # specified callback and timeout_seconds now.
+            transaction.start(callback, timeout_seconds)
 
         # enqueue
         self._tsch_enqueue(packet)
+        if transaction:
+            # keep the response packet in case of abortion
+            transaction.response = copy.deepcopy(packet)
 
     def send_confirmation(
             self,
@@ -224,11 +228,11 @@ class SixP(object):
         transaction = self._find_transaction(packet)
         transaction.set_callback(callback)
 
-        # keep the confirmation packet
-        transaction.confirmation = copy.deepcopy(packet)
-
         # enqueue
         self._tsch_enqueue(packet)
+
+        # keep the confirmation packet
+        transaction.confirmation = copy.deepcopy(packet)
 
     def add_transaction(self, transaction):
         if transaction.key in self.transaction_table:
@@ -256,6 +260,10 @@ class SixP(object):
         transaction_key = SixPTransaction.get_transaction_key(dummy_packet)
         transaction = self.transaction_table[transaction_key]
         assert transaction is not None
+        transaction.invoke_callback(
+            event  = d.SIXP_CALLBACK_EVENT_ABORTED,
+            packet = transaction.last_packet
+        )
 
         transaction._invalidate()
         if transaction.isInitiator:
@@ -264,9 +272,9 @@ class SixP(object):
             else:
                 packet_in_tx_queue = transaction.request
         else:
-                packet_in_tx_queue = transaction.response
+            packet_in_tx_queue = transaction.response
 
-        self.mote.tsch.remove_tx_packet(packet_in_tx_queue)
+        self.mote.tsch.dequeue(packet_in_tx_queue)
         self.log(
             SimEngine.SimLog.LOG_SIXP_TRANSACTION_ABORTED,
             {
@@ -309,11 +317,11 @@ class SixP(object):
             # create a new transaction instance for the incoming request
             try:
                 transaction = SixPTransaction(self.mote, request)
-                # start the timer now. callback and timeout_value can be set
-                # in send_response()
+                # start the timer now. callback and timeout_seconds
+                # can be set in send_response()
                 transaction.start(
-                    callback      = None,
-                    timeout_value = None
+                    callback        = None,
+                    timeout_seconds = None
                 )
             except TransactionAdditionError:
                 # SixPTransaction() would raise an exception when there is a
@@ -405,8 +413,8 @@ class SixP(object):
 
             # invoke callback
             transaction.invoke_callback(
-                event       = d.SIXP_CALLBACK_EVENT_PACKET_RECEPTION,
-                packet      = response
+                event  = d.SIXP_CALLBACK_EVENT_PACKET_RECEPTION,
+                packet = response
             )
 
     def _recv_confirmation(self, confirmation):
@@ -427,8 +435,8 @@ class SixP(object):
 
             # pass this to the scheduling function
             transaction.invoke_callback(
-                event       = d.SIXP_CALLBACK_EVENT_PACKET_RECEPTION,
-                packet      = confirmation
+                event  = d.SIXP_CALLBACK_EVENT_PACKET_RECEPTION,
+                packet = confirmation
             )
 
     def _create_packet(
@@ -660,16 +668,26 @@ class SixPTransaction(object):
                 or
                 (packet['app']['msgType'] == d.SIXP_MSG_TYPE_CONFIRMATION)
             ):
-            initiator       = packet['mac']['srcMac']
-            responder       = packet['mac']['dstMac']
+            initiator = packet['mac']['srcMac']
+            responder = packet['mac']['dstMac']
         elif packet['app']['msgType'] == d.SIXP_MSG_TYPE_RESPONSE:
-            initiator       = packet['mac']['dstMac']
-            responder       = packet['mac']['srcMac']
+            initiator = packet['mac']['dstMac']
+            responder = packet['mac']['srcMac']
         else:
             # shouldn't come here
             raise Exception()
 
         return '{0}-{1}'.format(initiator, responder)
+
+    @property
+    def last_packet(self):
+        if self.confirmation:
+            last_packet = self.confirmation
+        elif self.response:
+            last_packet = self.response
+        else:
+            last_packet = self.request
+        return last_packet
 
     def get_peerMac(self):
         return self.peerMac
@@ -677,18 +695,18 @@ class SixPTransaction(object):
     def set_callback(self, callback):
         self.callback = callback
 
-    def start(self, callback, timeout_value):
+    def start(self, callback, timeout_seconds):
         self.set_callback(callback)
 
-        if timeout_value is None:
+        if timeout_seconds is None:
             # use the default timeout value
-            timeout_value = self._get_default_timeout_value()
+            timeout_seconds = self._get_default_timeout_seconds()
 
-        self.engine.scheduleAtAsn(
-            asn              = self.engine.getAsn() + timeout_value,
-            cb               = self.timeout_handler,
-            uniqueTag        = self.event_unique_tag,
-            intraSlotOrder   = d.INTRASLOTORDER_STACKTASKS,
+        self.engine.scheduleIn(
+            delay          = timeout_seconds,
+            cb             = self.timeout_handler,
+            uniqueTag      = self.event_unique_tag,
+            intraSlotOrder = d.INTRASLOTORDER_STACKTASKS,
         )
 
     def complete(self):
@@ -706,13 +724,7 @@ class SixPTransaction(object):
         self._invalidate()
 
     def invoke_callback(self, event, packet):
-        if   event in [
-            d.SIXP_CALLBACK_EVENT_PACKET_RECEPTION,
-            d.SIXP_CALLBACK_EVENT_MAC_ACK_RECEPTION
-            ]:
-            assert packet is not None
-        elif event == d.SIXP_CALLBACK_EVENT_TIMEOUT:
-            assert packet is None
+        assert packet is not None
 
         if self.callback is not None:
             self.callback(event, packet)
@@ -747,12 +759,12 @@ class SixPTransaction(object):
                 dstMac = self.peerMac
             )
 
-            # need to invoke the callback after the invalidation; otherwise, a new
-            # transaction to the same peer would fail due to duplicate (concurrent)
-            # transaction.
+            # need to invoke the callback after the invalidation;
+            # otherwise, a new transaction to the same peer would fail
+            # due to duplicate (concurrent) transaction.
             self.invoke_callback(
                 event  = d.SIXP_CALLBACK_EVENT_TIMEOUT,
-                packet = None
+                packet = self.last_packet
             )
         else:
             # the transaction has already been invalidated; do nothing here.
@@ -795,7 +807,7 @@ class SixPTransaction(object):
 
         return transaction_type
 
-    def _get_default_timeout_value(self):
+    def _get_default_timeout_seconds(self):
 
         # draft-ietf-6tisch-6top-protocol-11 doesn't define the default timeout
         # value.
@@ -815,6 +827,7 @@ class SixPTransaction(object):
                 be = d.TSCH_MAX_BACKOFF_EXPONENT
         one_way_delay = (
             self.settings.tsch_slotframeLength *
+            self.settings.tsch_slotDuration *
             d.TSCH_MAXTXRETRIES *
             sum(be_list)
         )

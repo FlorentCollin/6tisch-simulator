@@ -9,6 +9,7 @@ import types
 import test_utils as u
 import SimEngine.Mote.MoteDefines as d
 from SimEngine import SimLog
+from SimEngine.Mote import tsch
 
 # frame_type having "True" in "first_enqueuing" can be enqueued to TX queue
 # even if the queue is full.
@@ -54,6 +55,106 @@ def test_enqueue_under_full_tx_queue(sim_engine,frame_type):
 
     # make sure that queuing that frame fails
     assert hop1.tsch.enqueue(test_frame) == False
+
+def test_enqueue_with_priority(sim_engine):
+    sim_engine = sim_engine(
+        diff_config = {
+            'exec_numMotes': 1
+        }
+    )
+    mote = sim_engine.motes[0]
+
+    # make sure the TX queue is empty now
+    assert not mote.tsch.txQueue
+
+    # prepare the base dummy packet
+    base_dummy_packet = {
+        'type': d.PKT_TYPE_DATA,
+        'mac': {
+            'srcMac': mote.get_mac_addr(),
+            'dstMac': d.BROADCAST_ADDRESS
+        }
+    }
+
+    # put one normal packet to the TX queue
+    normal_packet = copy.deepcopy(base_dummy_packet)
+    normal_packet['seq'] = 1
+    mote.tsch.enqueue(normal_packet, priority=False)
+    assert len(mote.tsch.txQueue) == 1
+
+    # put one priority packet
+    priority_packet = copy.deepcopy(base_dummy_packet)
+    priority_packet['seq'] = 2
+    mote.tsch.enqueue(priority_packet, priority=True)
+    # now we have the priority packet first in the TX queue
+    assert (
+        map(lambda x: x['seq'], mote.tsch.txQueue) ==
+        [2, 1]
+    )
+
+    # put another "normal" packet, which will be the last packet in
+    # the TX queue
+    normal_packet = copy.deepcopy(base_dummy_packet)
+    normal_packet['seq'] = 3
+    mote.tsch.enqueue(normal_packet, priority=False)
+    assert (
+        map(lambda x: x['seq'], mote.tsch.txQueue) ==
+        [2, 1, 3]
+    )
+
+    # lastly, put another "priority" packet, which should be the next
+    # packet of the first priority packet
+    priority_packet = copy.deepcopy(base_dummy_packet)
+    priority_packet['seq'] = 4
+    mote.tsch.enqueue(priority_packet, priority=True)
+    # now we have the priority packet first in the TX queue
+    assert (
+        map(lambda x: x['seq'], mote.tsch.txQueue) ==
+        [2, 4, 1, 3]
+    )
+
+    for i in range(5, sim_engine.settings.tsch_tx_queue_size + 1):
+        normal_packet = copy.deepcopy(base_dummy_packet)
+        normal_packet['seq'] = i
+        mote.tsch.enqueue(normal_packet, priority=False)
+
+    # the TX queue should be full
+    assert len(mote.tsch.txQueue) == sim_engine.settings.tsch_tx_queue_size
+
+    # seq of the last packet should be the same as the TX queue size
+    assert (
+        mote.tsch.txQueue[-1]['seq'] ==
+        sim_engine.settings.tsch_tx_queue_size
+    )
+
+    # add another priority packet
+    priority_packet = copy.deepcopy(base_dummy_packet)
+    new_pkt_seq = sim_engine.settings.tsch_tx_queue_size + 1
+    priority_packet['seq'] = new_pkt_seq
+    mote.tsch.enqueue(priority_packet, priority=True)
+
+    # the first three packets should be priority
+    assert (
+        map(lambda x: x['seq'], mote.tsch.txQueue[0:3]) ==
+        [2, 4, new_pkt_seq]
+    )
+    # the TX queue length shouldn't exceed the queue size
+    assert len(mote.tsch.txQueue) == sim_engine.settings.tsch_tx_queue_size
+    # the last packet in the queue should have
+    # (sim_engine.settings.tsch_tx_queue_size - 1) for its seq
+    priority_packet['seq'] = sim_engine.settings.tsch_tx_queue_size
+
+    # change all the packet in the TX queue to priority
+    for packet in mote.tsch.txQueue:
+        packet['mac']['priority'] = True
+
+    # add a priority packet, which should be dropped
+    priority_packet = copy.deepcopy(base_dummy_packet)
+    last_pkt_seq = sim_engine.settings.tsch_tx_queue_size + 2
+    priority_packet['seq'] = last_pkt_seq
+    mote.tsch.enqueue(priority_packet, priority=True)
+    assert len(mote.tsch.txQueue) == sim_engine.settings.tsch_tx_queue_size
+    assert mote.tsch.txQueue[-1]['seq'] != last_pkt_seq
 
 def test_removeTypeFromQueue(sim_engine):
     sim_engine = sim_engine(
@@ -216,16 +317,20 @@ def test_retransmission_count(sim_engine):
     # short-hands
     root = sim_engine.motes[0]
     hop1 = sim_engine.motes[1]
-    connectivity_matrix = sim_engine.connectivity.connectivity_matrix
+    connectivity_matrix = sim_engine.connectivity.matrix
 
     # stop DIO timer
     root.rpl.trickle_timer.stop()
     hop1.rpl.trickle_timer.stop()
 
     # set 0% of PDR to the link between the two motes
-    for channel in range(sim_engine.settings.phy_numChans):
-        connectivity_matrix[root.id][hop1.id][channel]['pdr'] = 0
-        connectivity_matrix[hop1.id][root.id][channel]['pdr'] = 0
+    for channel in d.TSCH_HOPPING_SEQUENCE:
+        connectivity_matrix.set_pdr_both_directions(
+            root.id,
+            hop1.id,
+            channel,
+            0
+        )
 
     # make hop1 send an application packet
     hop1.app._send_a_single_packet()
@@ -370,7 +475,7 @@ def test_eb_by_root(sim_engine):
     #   ...
     #   DAGRank(rank(0))-1 = 0 is compliant with 802.15.4's requirement of
     #   having the root use Join Metric = 0.
-    assert eb['app']['join_metric'] == 0
+    assert eb['mac']['join_metric'] == 0
 
 def test_select_active_tx_cell(sim_engine):
     # this test is for a particular case; it's not a general test for
@@ -388,13 +493,31 @@ def test_select_active_tx_cell(sim_engine):
     mote.tsch.addCell(1, 1, neighbor_mac_addr_2, txshared_cell_options)
 
     # put one unicast frame for neighbor_1 to the TX queue first
-    frame_1 = {'mac': {'dstMac': neighbor_mac_addr_1, 'retriesLeft': d.TSCH_MAXTXRETRIES}}
+    frame_1 = {
+        'type': d.PKT_TYPE_DATA,
+        'mac': {
+            'dstMac': neighbor_mac_addr_1,
+            'retriesLeft': d.TSCH_MAXTXRETRIES
+        }
+    }
     mote.tsch.txQueue.append(frame_1)
 
     # put two unicast frames for neighbor_2 to the TX queue; the first of
     # the two frames is under retransmission
-    frame_2 = {'mac': {'dstMac': neighbor_mac_addr_2, 'retriesLeft': d.TSCH_MAXTXRETRIES}}
-    frame_3 = {'mac': {'dstMac': neighbor_mac_addr_2, 'retriesLeft': d.TSCH_MAXTXRETRIES}}
+    frame_2 = {
+        'type': d.PKT_TYPE_DATA,
+        'mac': {
+            'dstMac': neighbor_mac_addr_2,
+            'retriesLeft': d.TSCH_MAXTXRETRIES
+        }
+    }
+    frame_3 = {
+        'type': d.PKT_TYPE_DATA,
+        'mac': {
+            'dstMac': neighbor_mac_addr_2,
+            'retriesLeft': d.TSCH_MAXTXRETRIES
+        }
+    }
     frame_2['mac']['retriesLeft'] -= 1
     mote.tsch.txQueue.append(frame_2)
     mote.tsch.txQueue.append(frame_3)
@@ -491,7 +614,16 @@ def test_pending_bit(sim_engine, fixture_pending_bit_enabled):
 
     # get the mote joined the network
     eb = root.tsch._create_EB()
+    eb_dummy = {
+        'type':            d.PKT_TYPE_EB,
+        'mac': {
+            'srcMac':      '00-00-00-AA-AA-AA',     # dummy
+            'dstMac':      d.BROADCAST_ADDRESS,     # broadcast
+            'join_metric': 1000
+        }
+    }
     mote.tsch._action_receiveEB(eb)
+    mote.tsch._action_receiveEB(eb_dummy)
     dio = root.rpl._create_DIO()
     dio['mac'] = {'srcMac': root.get_mac_addr()}
     mote.rpl.action_receiveDIO(dio)
@@ -557,3 +689,206 @@ def test_pending_bit(sim_engine, fixture_pending_bit_enabled):
             (logs[1]['_asn'] - logs[0]['_asn']) ==
             sim_engine.settings.tsch_slotframeLength
         )
+
+@pytest.fixture(params=[
+    'no_diff',
+    'slot_offset',
+    'channel_offset',
+    'cell_options',
+    'mac_addr',
+    'link_type'
+])
+def fixture_cell_comparison_test_type(request):
+    return request.param
+
+def test_cell_comparison(fixture_cell_comparison_test_type):
+    cell_attributes = {
+        'slot_offset'   : 1,
+        'channel_offset': 2,
+        'options'       : [d.CELLOPTION_TX],
+        'mac_addr'      : None,
+        'is_advertising': False
+    }
+    cell_1 = tsch.Cell(**cell_attributes)
+
+    if fixture_cell_comparison_test_type == 'no_diff':
+        # do nothing
+        pass
+    elif fixture_cell_comparison_test_type == 'slot_offset':
+        cell_attributes['slot_offset'] += 1
+    elif fixture_cell_comparison_test_type == 'channel_offset':
+        cell_attributes['channel_offset'] += 1
+    elif fixture_cell_comparison_test_type == 'cell_options':
+        cell_attributes['options'] = [d.CELLOPTION_RX]
+    elif fixture_cell_comparison_test_type == 'mac_addr':
+        cell_attributes['mac_addr'] = 'dummy_mac_addr'
+    elif fixture_cell_comparison_test_type == 'link_type':
+        cell_attributes['is_advertising'] = True
+    else:
+        raise NotImplementedError()
+
+    cell_2 = tsch.Cell(**cell_attributes)
+
+    if fixture_cell_comparison_test_type == 'no_diff':
+        assert cell_1 == cell_2
+    else:
+        assert cell_1 != cell_2
+
+def test_advertising_link(sim_engine):
+    # EB should be sent only on links having ADVERTISING on
+    sim_engine = sim_engine(
+        diff_config = {
+            'exec_numMotes': 1,
+            'sf_class'     : 'SFNone',
+            'tsch_slotframeLength' : 2,
+            'tsch_probBcast_ebProb': 1.0,
+        }
+    )
+    root = sim_engine.motes[0]
+    # disable DIO so that there will be no traffic except for EBs.
+    root.rpl.trickle_timer.stop()
+
+    slotframe = root.tsch.get_slotframe(0)
+
+    # make sure we have one cell
+    assert len(slotframe.get_busy_slots()) == 1
+    cells = slotframe.get_cells_by_mac_addr(None)
+    assert len(cells) == 1
+
+    # the link-type of the minimal cell should be ADVERTISING
+    minimal_cell = cells[0]
+    assert minimal_cell.slot_offset == 0
+    assert minimal_cell.channel_offset == 0
+    assert (
+        sorted(minimal_cell.options) ==
+        sorted([
+            d.CELLOPTION_RX,
+            d.CELLOPTION_TX,
+            d.CELLOPTION_SHARED
+        ])
+    )
+    assert minimal_cell.mac_addr == None
+    assert minimal_cell.link_type == d.LINKTYPE_ADVERTISING
+
+    # add one cell whose link-type is NORMAL at slotoffset 1
+    normal_cell = tsch.Cell(
+        slot_offset    = 1,
+        channel_offset = 1,
+        options        = minimal_cell.options,
+        mac_addr       = None,
+        is_advertising = False
+    )
+    assert normal_cell.link_type == d.LINKTYPE_NORMAL
+    slotframe.add(normal_cell)
+
+    # run the simulation; we should have EBs only on the minimal cells
+    u.run_until_end(sim_engine)
+
+    tx_logs = u.read_log_file(filter=[SimLog.LOG_TSCH_TXDONE['type']])
+    assert len(tx_logs) > 0
+    for tx_log in tx_logs:
+        assert tx_log['slot_offset'] != normal_cell.slot_offset
+
+def test_get_cells(sim_engine):
+    SLOTFRAME_LENGTH = 101
+    sim_engine = sim_engine(
+        diff_config=
+        {
+            'exec_numMotes'       : 1,
+            'tsch_slotframeLength': SLOTFRAME_LENGTH
+        }
+    )
+    mote = sim_engine.motes[0]
+
+    assert len(mote.tsch.get_cells()) == 1
+
+    # add slotframe 1
+    mote.tsch.add_slotframe(1, SLOTFRAME_LENGTH)
+    # add a cell having None for its mac_addr
+    mote.tsch.addCell(
+        slotOffset    = 1,
+        channelOffset = 1,
+        neighbor      = None,
+        cellOptions   = [
+            d.CELLOPTION_TX,
+            d.CELLOPTION_RX,
+            d.CELLOPTION_SHARED
+        ],
+        slotframe_handle = 1
+    )
+
+    # get_cells() should return 2 now
+    assert len(mote.tsch.get_cells()) == 2
+
+@pytest.fixture(params=['root', 'mote_1'])
+def fixture_clock_source(request):
+    return request.param
+
+def test_eb_wait_timer(sim_engine, fixture_clock_source):
+    sim_engine = sim_engine(
+        diff_config = {
+            'exec_numMotes'        : 3,
+            'secjoin_enabled'      : False,
+            'tsch_probBcast_ebProb': 0
+        }
+    )
+
+    assert d.TSCH_MAX_EB_DELAY == 180
+    assert d.TSCH_NUM_NEIGHBORS_TO_WAIT == 2
+
+    root = sim_engine.motes[0]
+    mote_1 = sim_engine.motes[1]
+    mote_2 = sim_engine.motes[2]
+
+    # give an EB to mote_1, which will get synchronized after 180
+    # seconds
+    eb_root = root.tsch._create_EB()
+    mote_1.tsch._action_receiveEB(eb_root)
+
+    # run the simulation for 180 seconds - 1 slot
+    u.run_until_asn(
+        sim_engine,
+        (
+            sim_engine.getAsn() +
+            d.TSCH_MAX_EB_DELAY / sim_engine.settings.tsch_slotDuration - 1
+        )
+    )
+    assert mote_1.tsch.isSync is False
+    # proceed one slot
+    u.run_until_asn(sim_engine, sim_engine.getAsn() + 1)
+    assert mote_1.tsch.isSync is True
+    # the EB list should be empty
+    assert not mote_1.tsch.received_eb_list
+
+    # give a DIO to mote_1 so that mote_1 can create an EB
+    dio = root.rpl._create_DIO()
+    dio['mac'] = {'srcMac': root.get_mac_addr()}
+    mote_1.rpl.action_receiveDIO(dio)
+    eb_mote_1 = mote_1.tsch._create_EB()
+
+    # ajudst join metric
+    if fixture_clock_source == 'root':
+        eb_root['mac']['join_metric'] = 1
+        eb_mote_1['mac']['join_metric'] = 100
+    elif fixture_clock_source == 'mote_1':
+        eb_root['mac']['join_metric'] = 100
+        eb_mote_1['mac']['join_metric'] = 1
+    else:
+        raise NotImplementedError(fixture_clock_source)
+
+    # give the EB to mote_2
+    mote_2.tsch._action_receiveEB(eb_root)
+    assert mote_2.tsch.isSync is False
+
+    # give an EB of mote_1 to mote_2, which makes mote_2 get
+    # synchronized immediately
+    mote_2.tsch._action_receiveEB(eb_mote_1)
+    assert mote_2.tsch.isSync is True
+    # the EB list should be empty
+    assert not mote_2.tsch.received_eb_list
+
+    # mote_2 should select one as fixture_clock_source
+    if fixture_clock_source == 'root':
+        assert mote_2.tsch.clock.source == root.get_mac_addr()
+    else:
+        assert mote_2.tsch.clock.source == mote_1.get_mac_addr()

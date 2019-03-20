@@ -98,8 +98,9 @@ def test_source_route_calculation(sim_engine):
 def test_upstream_routing(sim_engine):
     sim_engine = sim_engine(
         diff_config = {
-            'exec_numMotes': 3,
-            'conn_class'   : 'FullyMeshed'
+            'exec_numMotes'  : 3,
+            'conn_class'     : 'FullyMeshed',
+            'secjoin_enabled': False
         }
     )
 
@@ -159,6 +160,7 @@ class TestOF0(object):
                 'secjoin_enabled'         : False,
                 'tsch_keep_alive_interval': 0,
                 'conn_class'              : 'Linear',
+                'sf_class'                : 'MSF'
             }
         )
 
@@ -170,7 +172,7 @@ class TestOF0(object):
         )
 
         # get the network ready to be test
-        u.run_until_everyone_joined(sim_engine)
+        u.run_until_mote_is_ready_for_app(sim_engine, motes[-1])
         assert sim_engine.getAsn() < asn_at_end_of_simulation
 
         # set ETX=100/75 (numTx=100, numTxAck=75)
@@ -185,9 +187,18 @@ class TestOF0(object):
 
             # set numTx and numTxAck
             preferred_parent = mote.rpl.of.preferred_parent
-            preferred_parent['numTx'] = 100
-            preferred_parent['numTxAck'] = 75
-            mote.rpl.of._update_neighbor_rank_increase(preferred_parent)
+            autonomous_cell = mote.tsch.get_cells(
+                mac_addr         = preferred_parent['mac_addr'],
+                slotframe_handle = mote.sf.SLOTFRAME_HANDLE
+            )[0]
+            preferred_parent['numTx'] = 99
+            preferred_parent['numTxAck'] = 74
+            # inform RPL of the 100th transmission that is success
+            mote.rpl.of.update_etx(
+                cell     = autonomous_cell,
+                mac_addr = preferred_parent['mac_addr'],
+                isACKed  = True
+            )
 
         # test using rank values in Figure 4 of RFC 8180
         assert motes[0].rpl.get_rank()   == 256
@@ -225,9 +236,20 @@ class TestOF0(object):
 
         # let all the motes get synchronized
         eb = root.tsch._create_EB()
+        eb_dummy = {
+            'type':            d.PKT_TYPE_EB,
+            'mac': {
+                'srcMac':      '00-00-00-AA-AA-AA',     # dummy
+                'dstMac':      d.BROADCAST_ADDRESS,     # broadcast
+                'join_metric': 1000
+            }
+        }
         mote_1.tsch._action_receiveEB(eb)
+        mote_1.tsch._action_receiveEB(eb_dummy)
         mote_2.tsch._action_receiveEB(eb)
+        mote_2.tsch._action_receiveEB(eb_dummy)
         mote_3.tsch._action_receiveEB(eb)
+        mote_3.tsch._action_receiveEB(eb_dummy)
 
         # let mote_1 and mote_2 join the RPL network
         dio_from_root = root.rpl._create_DIO()
@@ -273,7 +295,16 @@ class TestOF0(object):
 
         # get mote synched
         eb = root.tsch._create_EB()
+        eb_dummy = {
+            'type':            d.PKT_TYPE_EB,
+            'mac': {
+                'srcMac':      '00-00-00-AA-AA-AA',     # dummy
+                'dstMac':      d.BROADCAST_ADDRESS,     # broadcast
+                'join_metric': 1000
+            }
+        }
         mote.tsch._action_receiveEB(eb)
+        mote.tsch._action_receiveEB(eb_dummy)
 
         # inject the DIO to mote, which shouldn't cause any exception
         dio_with_infinite_rank = root.rpl._create_DIO()
@@ -303,7 +334,16 @@ class TestOF0(object):
 
         # get mote synched and joined
         eb = root.tsch._create_EB()
+        eb_dummy = {
+            'type':            d.PKT_TYPE_EB,
+            'mac': {
+                'srcMac':      '00-00-00-AA-AA-AA',     # dummy
+                'dstMac':      d.BROADCAST_ADDRESS,     # broadcast
+                'join_metric': 1000
+            }
+        }
         mote.tsch._action_receiveEB(eb)
+        mote.tsch._action_receiveEB(eb_dummy)
 
         dio = root.rpl._create_DIO()
         dio['mac'] = {'srcMac': root.get_mac_addr()}
@@ -318,16 +358,16 @@ class TestOF0(object):
 
         # when ETX exceeds UPPER_LIMIT_OF_ACCEPTABLE_ETX, mote should leave
         # root
-        mote.rpl.of.update_etx(cell, root.get_mac_addr(), isACKed=True) # ETX is 1
-        for _ in range(mote.rpl.of.UPPER_LIMIT_OF_ACCEPTABLE_ETX - 1):
-            mote.rpl.of.update_etx(cell, root.get_mac_addr(), isACKed=False)
-
-        # ETX == UPPER_LIMIT_OF_ACCEPTABLE_ETX; root should be still mote's
-        # parent
-        assert mote.rpl.getPreferredParent() == root.get_mac_addr()
-
-        # mote should lose its preferred parent
+        preferred_parent = mote.rpl.of.preferred_parent
+        preferred_parent['numTx'] = 99
+        preferred_parent['numTxAck'] = (
+            preferred_parent['numTx'] /
+            mote.rpl.of.UPPER_LIMIT_OF_ACCEPTABLE_ETX
+        )
         mote.rpl.of.update_etx(cell, root.get_mac_addr(), isACKed=False)
+
+        # now ETX is larger than UPPER_LIMIT_OF_ACCEPTABLE_ETX; root
+        # should be still mote's parent
         assert mote.rpl.getPreferredParent() is None
 
         # give the DIO again
@@ -336,14 +376,8 @@ class TestOF0(object):
 
         # if mote has many consecutive transmission failures without any
         # success, it should leave the preferred parent
-        for _ in range(mote.rpl.of.MAX_NUM_OF_CONSECUTIVE_FAILURES_WITHOUT_ACK):
+        for _ in range(mote.rpl.of.MAX_NUM_OF_CONSECUTIVE_FAILURES_WITHOUT_SUCCESS):
             mote.rpl.of.update_etx(cell, root.get_mac_addr(), isACKed=False)
-
-        # mote should still have the preferred parent
-        assert mote.rpl.getPreferredParent() == root.get_mac_addr()
-
-        # then, it should lose it
-        mote.rpl.of.update_etx(cell, root.get_mac_addr(), isACKed=False)
         assert mote.rpl.getPreferredParent() is None
 
 
@@ -368,7 +402,16 @@ def test_dis_config(sim_engine, fixture_dis_mode):
 
     # give EB to mote
     eb = root.tsch._create_EB()
+    eb_dummy = {
+        'type':            d.PKT_TYPE_EB,
+        'mac': {
+            'srcMac':      '00-00-00-AA-AA-AA',     # dummy
+            'dstMac':      d.BROADCAST_ADDRESS,     # broadcast
+            'join_metric': 1000
+        }
+    }
     mote.tsch._action_receiveEB(eb)
+    mote.tsch._action_receiveEB(eb_dummy)
 
     # stop the trickle timer for this test
     root.rpl.trickle_timer.stop()
@@ -429,7 +472,16 @@ def test_dis_timer(sim_engine):
 
     # get mote synchronized
     eb = root.tsch._create_EB()
+    eb_dummy = {
+        'type':            d.PKT_TYPE_EB,
+        'mac': {
+            'srcMac':      '00-00-00-AA-AA-AA',     # dummy
+            'dstMac':      d.BROADCAST_ADDRESS,     # broadcast
+            'join_metric': 1000
+        }
+    }
     mote.tsch._action_receiveEB(eb)
+    mote.tsch._action_receiveEB(eb_dummy)
 
     # disable root's communication capability by deleting the minimal shared
     # cell
@@ -487,8 +539,18 @@ def test_dodag_parent(sim_engine, fixture_rank_value):
 
     # get them connected to the network
     eb = root.tsch._create_EB()
+    eb_dummy = {
+        'type':            d.PKT_TYPE_EB,
+        'mac': {
+            'srcMac':      '00-00-00-AA-AA-AA',     # dummy
+            'dstMac':      d.BROADCAST_ADDRESS,     # broadcast
+            'join_metric': 1000
+        }
+    }
     parent.tsch._action_receiveEB(eb)
+    parent.tsch._action_receiveEB(eb_dummy)
     child.tsch._action_receiveEB(eb)
+    child.tsch._action_receiveEB(eb_dummy)
 
     dio = root.rpl._create_DIO()
     dio['mac'] = {'srcMac': root.get_mac_addr()}
