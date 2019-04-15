@@ -292,6 +292,18 @@ class Tsch(object):
 
     # tx queue interface with upper layers
 
+    @property
+    def droppable_normal_packet_index(self):
+        for rindex, packet in enumerate(reversed(self.txQueue)):
+            if (
+                    (packet['mac']['priority'] is False)
+                    and
+                    (self.pktToSend != packet)
+                ):
+                # return index of the packet
+                return len(self.txQueue) - rindex - 1
+        return None
+
     def enqueue(self, packet, priority=False):
 
         assert packet['type'] != d.PKT_TYPE_EB
@@ -301,15 +313,16 @@ class Tsch(object):
         goOn = True
 
         # check there is space in txQueue
+        assert len(self.txQueue) <= self.txQueueSize
         if (
                 goOn
                 and
-                (len(self.txQueue) >= self.txQueueSize)
+                (len(self.txQueue) == self.txQueueSize)
                 and
                 (
                     (priority is False)
                     or
-                    self.txQueue[-1]['mac']['priority']
+                    self.droppable_normal_packet_index is None
                 )
             ):
             # my TX queue is full
@@ -367,8 +380,8 @@ class Tsch(object):
                 if len(self.txQueue) == self.txQueueSize:
                     assert not self.txQueue[-1]['mac']['priority']
                     # drop the last one in the queue
-                    packet_to_drop = self.txQueue[-1]
-                    self.dequeue(packet_to_drop)
+                    packet_index_to_drop = self.droppable_normal_packet_index
+                    packet_to_drop = self.dequeue_by_index(packet_index_to_drop)
                     self.mote.drop_packet(
                         packet = packet_to_drop,
                         reason  = SimEngine.SimLog.DROPREASON_TXQUEUE_FULL
@@ -392,6 +405,10 @@ class Tsch(object):
         else:
             # do nothing
             pass
+
+    def dequeue_by_index(self, index):
+        assert index < len(self.txQueue)
+        return self.txQueue.pop(index)
 
     def get_first_packet_to_send(self, dst_mac_addr=None):
         packet_to_send = None
@@ -739,7 +756,11 @@ class Tsch(object):
         self.schedule_next_listeningForEB_cell()
 
     def _perform_synchronization(self):
-        assert self.received_eb_list
+        if not self.received_eb_list:
+            # this method call should be in a timer task and we should
+            # have already been synchronized at the same ASN
+            assert self.isSync
+            return
 
         # [Section 6.3.6, IEEE802.15.4-2015]
         # The higher layer may wait for additional
