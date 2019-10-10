@@ -12,6 +12,7 @@ import MoteDefines as d
 
 # Simulator-wide modules
 import SimEngine
+from SimEngine.Mote.sf import SchedulingFunctionMSF
 
 # =========================== defines =========================================
 
@@ -46,22 +47,37 @@ class SecJoin(object):
 
     # getters/setters
 
-    def setIsJoined(self, newState):
-        assert newState in [True, False]
-
-        # log
-        self.log(
-            SimEngine.SimLog.LOG_SECJOIN_JOINED,
-            {
-                '_mote_id': self.mote.id,
-            }
-        )
-
+    def setIsJoined(self, value):
         # record
-        self._isJoined = newState
+        self._isJoined = value
 
-        # start RPL
-        self.mote.rpl.start()
+        if (
+                isinstance(self.mote.sf, SchedulingFunctionMSF)
+                and
+                self.mote.tsch.join_proxy
+            ):
+            # delete the autonomous cell to the join proxy if we
+            # have. draft-ietf-6tisch-msf-03 draft says, 'The
+            # AutoUpCell to the JP is removed at the same time by the
+            # "joined node".'
+            self.mote.sf.delete_autonomous_cell_to_join_proxy()
+
+        if value:
+            self.log(
+                SimEngine.SimLog.LOG_SECJOIN_JOINED,
+                {
+                    '_mote_id': self.mote.id,
+                }
+            )
+            self.mote.rpl.start()
+        else:
+            self.log(
+                SimEngine.SimLog.LOG_SECJOIN_UNJOINED,
+                {
+                    '_mote_id': self.mote.id,
+                }
+            )
+            self.mote.rpl.stop()
 
     def getIsJoined(self):
         return self._isJoined
@@ -71,9 +87,15 @@ class SecJoin(object):
     def startJoinProcess(self):
 
         assert self.mote.dagRoot==False
-        assert self.mote.tsch.getIsSync()==True
+
+        if not self.mote.tsch.getIsSync():
+            return
+
+        if self.getIsJoined():
+            # we've already joined
+            return
+
         assert self.mote.tsch.join_proxy!=None
-        assert self.getIsJoined()==False
 
         if self.settings.secjoin_enabled:
             self._retransmission_count = 0
@@ -82,10 +104,13 @@ class SecJoin(object):
             # TIMEOUT_BASE and (TIMEOUT_BASE * TIMEOUT_RANDOM_FACTOR)
             self._request_timeout  = self.TIMEOUT_BASE * random.uniform(1, self.TIMEOUT_RANDOM_FACTOR)
 
+            if isinstance(self.mote.sf, SchedulingFunctionMSF):
+                self.mote.sf.add_autonomous_cell_to_join_proxy()
+
             self._send_join_request()
         else:
             # consider I'm already joined
-            self.setIsJoined(True) # forced (secjoin_enabled==False)
+            self.setIsJoined(True)  # forced (secjoin_enabled==False)
 
     # from lower stack
 
@@ -186,14 +211,17 @@ class SecJoin(object):
                 self.engine.removeFutureEvent(self._retransmission_tag)
 
                 # I'm now joined!
-                self.setIsJoined(True) # mote
+                self.setIsJoined(True)  # mote
         else:
             raise SystemError()
 
     #======================== private ==========================================
 
     def _retransmit_join_request(self):
-        if  self.getIsJoined() is True:
+        if not self.mote.tsch.getIsSync():
+            # we are desynchronized; give it up
+            return
+        elif  self.getIsJoined() is True:
             # do nothing; this could happen when it received a response at the
             # same slot
             pass

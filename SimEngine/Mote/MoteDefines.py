@@ -1,3 +1,5 @@
+# coding: utf-8
+
 # === admin
 NUM_SUFFICIENT_TX                           = 10      # sufficient num. of tx to estimate pdr by ACK
 WAITING_FOR_TX                              = 'waiting_for_tx'
@@ -92,6 +94,7 @@ TSCH_MAX_BACKOFF_EXPONENT                   = 7
 TSCH_HOPPING_SEQUENCE                       = [16, 17, 23, 18, 26, 15, 25, 22, 19, 11, 12, 13, 24, 14, 20, 21]
 TSCH_MAX_EB_DELAY                           = 180
 TSCH_NUM_NEIGHBORS_TO_WAIT                  = 2
+TSCH_DESYNCHRONIZED_TIMEOUT_SLOTS           = 1750
 CELLOPTION_TX                               = 'TX'
 CELLOPTION_RX                               = 'RX'
 CELLOPTION_SHARED                           = 'SHARED'
@@ -108,9 +111,20 @@ RADIO_STATE_RX                              = 'rx'
 RADIO_STATE_OFF                             = 'off'
 
 # === battery
-CHARGE_Idle_uC                              = 6.4
+# Idle: Time slot during which a node listens for data, but receives
+# none
+CHARGE_IdleListen_uC                        = 6.4
+# TxDataRxAck: A timeslot during which the node sends some data frame,
+# and expects an acknowledgment (ACK)
 CHARGE_TxDataRxAck_uC                       = 54.5
+# TxData: Similar to TxDataRxAck, but no ACK is expected. This is
+# typically used when the data packet is broadcast
 CHARGE_TxData_uC                            = 49.5
-CHARGE_TxDataRxAckNone_uC                   = 54.5
+# RxDataTxAck: A timeslot during which the node receives some data
+# frame, and sends back an ACK to indicate successful reception
 CHARGE_RxDataTxAck_uC                       = 32.6
+# RxData: Similar to the RxDataTxAck but no ACK is sent (for a
+# broadcast packet)
 CHARGE_RxData_uC                            = 22.6
+# Time slot during which the node’s radio stays off
+CHARGE_Sleep_uC                             = 0.0
