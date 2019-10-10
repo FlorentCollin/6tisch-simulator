@@ -86,7 +86,12 @@ class Tsch(object):
             )
 
             self.asnLastSync = self.engine.getAsn()
-            self._start_keep_alive_timer()
+            if self.mote.dagRoot:
+                # we don't need the timers
+                pass
+            else:
+                self._start_keep_alive_timer()
+                self._start_synchronization_timer()
 
             # start SF
             self.mote.sf.start()
@@ -103,14 +108,24 @@ class Tsch(object):
                     "_mote_id":   self.mote.id,
                 }
             )
+            # DAGRoot gets never desynchronized
+            assert not self.mote.dagRoot
 
             self.stopSendingEBs()
             self.delete_minimal_cell()
             self.mote.sf.stop()
-            self.join_proxy = None
+            self.mote.sixp.clear_transaction_table()
+            self.mote.secjoin.setIsJoined(False)
             self.asnLastSync = None
             self.clock.desync()
             self._stop_keep_alive_timer()
+            self._stop_synchronization_timer()
+            self.txQueue = []
+            self.received_eb_list = {}
+            # we may have this timer task
+            self.engine.removeFutureEvent(
+                uniqueTag=(self.mote.id, 'tsch', 'wait_secjoin')
+            )
 
             # transition: active->listeningForEB
             self.engine.removeFutureEvent(      # remove previously scheduled listeningForEB cells
@@ -119,27 +134,37 @@ class Tsch(object):
             self.schedule_next_listeningForEB_cell()
 
     def get_busy_slots(self, slotframe_handle=0):
-        return self.slotframes[slotframe_handle].get_busy_slots()
+        if slotframe_handle in self.slotframes:
+            return self.slotframes[slotframe_handle].get_busy_slots()
+        else:
+            return 0
 
     def get_available_slots(self, slotframe_handle=0):
-        return self.slotframes[slotframe_handle].get_available_slots()
+        if slotframe_handle in self.slotframes:
+            return self.slotframes[slotframe_handle].get_available_slots()
+        else:
+            return 0
 
     def get_cell(self, slot_offset, channel_offset, mac_addr, slotframe_handle=0):
-        slotframe = self.slotframes[slotframe_handle]
-        cells = slotframe.get_cells_by_slot_offset(slot_offset)
-        for cell in cells:
-            if (
-                    (cell.channel_offset == channel_offset)
-                    and
-                    (cell.mac_addr == mac_addr)
-                ):
-                return cell
+        if slotframe_handle in self.slotframes:
+            slotframe = self.slotframes[slotframe_handle]
+            cells = slotframe.get_cells_by_slot_offset(slot_offset)
+            for cell in cells:
+                if (
+                        (cell.channel_offset == channel_offset)
+                        and
+                        (cell.mac_addr == mac_addr)
+                    ):
+                    return cell
         return None
 
     def get_cells(self, mac_addr=None, slotframe_handle=None):
         if slotframe_handle:
-            slotframe = self.slotframes[slotframe_handle]
-            ret_val = slotframe.get_cells_by_mac_addr(mac_addr)
+            if slotframe_handle in self.slotframes:
+                slotframe = self.slotframes[slotframe_handle]
+                ret_val = slotframe.get_cells_by_mac_addr(mac_addr)
+            else:
+                ret_val = []
         else:
             ret_val = []
             for slotframe_handle in self.slotframes:
@@ -563,6 +588,7 @@ class Tsch(object):
                     self.asnLastSync = asn # ACK-based sync
                     self.clock.sync()
                     self._reset_keep_alive_timer()
+                    self._reset_synchronization_timer()
 
                 # remove packet from queue
                 self.dequeue(self.pktToSend)
@@ -672,6 +698,7 @@ class Tsch(object):
             self.asnLastSync = asn # packet-based sync
             self.clock.sync()
             self._reset_keep_alive_timer()
+            self._reset_synchronization_timer()
 
         # update schedule stats
         if (
@@ -775,17 +802,23 @@ class Tsch(object):
             self.received_eb_list,
             key=lambda x: self.received_eb_list[x]['mac']['join_metric']
         )
-        self.clock.sync(clock_source_mac_addr)
-        self.setIsSync(True) # mote
+        clock_source = self.engine.get_mote_by_mac_addr(clock_source_mac_addr)
+        if clock_source.dagRoot or clock_source.tsch.getIsSync():
+            self.clock.sync(clock_source_mac_addr)
+            self.setIsSync(True) # mote
 
-        # the mote that sent the EB is now by join proxy
-        self.join_proxy = netaddr.EUI(clock_source_mac_addr)
+            # the mote that sent the EB is now by join proxy
+            self.join_proxy = netaddr.EUI(clock_source_mac_addr)
 
-        # add the minimal cell to the schedule (read from EB)
-        self.add_minimal_cell() # mote
+            # add the minimal cell to the schedule (read from EB)
+            self.add_minimal_cell() # mote
 
-        # trigger join process
-        self.mote.secjoin.startJoinProcess()
+            # trigger join process
+            self.mote.secjoin.startJoinProcess()
+        else:
+            # our clock source is desynchronized; we cannot get
+            # synchronized with the network using the source
+            pass
 
         # clear the EB list
         self.received_eb_list = {}
@@ -1239,21 +1272,53 @@ class Tsch(object):
             self.engine.scheduleIn(
                 delay          = self.settings.tsch_keep_alive_interval,
                 cb             = self._send_keep_alive_message,
-                uniqueTag      = self._get_keep_alive_event_tag(),
+                uniqueTag      = self._get_event_tag('tsch.keep_alive_event'),
                 intraSlotOrder = d.INTRASLOTORDER_STACKTASKS
             )
 
     def _stop_keep_alive_timer(self):
         self.engine.removeFutureEvent(
-            uniqueTag = self._get_keep_alive_event_tag()
+            uniqueTag = self._get_event_tag('tsch.keep_alive_event')
         )
 
     def _reset_keep_alive_timer(self):
         self._stop_keep_alive_timer()
         self._start_keep_alive_timer()
 
-    def _get_keep_alive_event_tag(self):
-        return '{0}-{1}'.format(self.mote.id, 'tsch.keep_alive_event')
+    def _start_synchronization_timer(self):
+        self._reset_synchronization_timer()
+
+    def _stop_synchronization_timer(self):
+        self.engine.removeFutureEvent(
+            uniqueTag = self._get_event_tag('tsch.synchronization_timer')
+        )
+
+    def _reset_synchronization_timer(self):
+        if (
+                (self.settings.tsch_keep_alive_interval == 0)
+                or
+                (self.mote.dagRoot is True)
+            ):
+            # do nothing
+            pass
+        else:
+            target_asn = self.engine.getAsn() + d.TSCH_DESYNCHRONIZED_TIMEOUT_SLOTS
+
+            def _desync():
+                self.setIsSync(False)
+
+            self.engine.scheduleAtAsn(
+                asn            = target_asn,
+                cb             = _desync,
+                uniqueTag      = self._get_event_tag('tsch.synchronization_timer'),
+                intraSlotOrder = d.INTRASLOTORDER_STACKTASKS
+            )
+
+    def _get_event_tag(self, event_name):
+        return '{0}-{1}'.format(self.mote.id, event_name)
+
+    def _get_synchronization_event_tag(self):
+        return '{0}-{1}.format()'
 
     # Pending bit
     def _schedule_next_tx_for_pending_bit(self, dstMac, channel):
@@ -1427,23 +1492,27 @@ class SlotFrame(object):
         self.mote_id = mote_id
         self.slotframe_handle = slotframe_handle
         self.length = num_slots
-        self.slots  = [[] for _ in range(self.length)]
+        self.slots  = {}
         # index by neighbor_mac_addr for quick access
         self.cells  = {}
 
     def __repr__(self):
         return 'slotframe(length: {0}, num_cells: {1})'.format(
             self.length,
-            len(list(chain.from_iterable(self.slots)))
+            len(list(chain.from_iterable(self.slots.values())))
         )
 
     def add(self, cell):
         assert cell.slot_offset < self.length
-        self.slots[cell.slot_offset].append(cell)
-        if cell.mac_addr not in self.cells.keys():
+        if cell.slot_offset not in self.slots:
+            self.slots[cell.slot_offset] = [cell]
+        else:
+            self.slots[cell.slot_offset] += [cell]
+
+        if cell.mac_addr not in self.cells:
             self.cells[cell.mac_addr] = [cell]
         else:
-            self.cells[cell.mac_addr].append(cell)
+            self.cells[cell.mac_addr] += [cell]
         cell.slotframe = self
 
         # log
@@ -1467,6 +1536,8 @@ class SlotFrame(object):
         self.cells[cell.mac_addr].remove(cell)
         if len(self.cells[cell.mac_addr]) == 0:
             del self.cells[cell.mac_addr]
+        if len(self.slots[cell.slot_offset]) == 0:
+            del self.slots[cell.slot_offset]
 
         # log
         self.log(
@@ -1483,30 +1554,33 @@ class SlotFrame(object):
 
     def get_cells_by_slot_offset(self, slot_offset):
         assert slot_offset < self.length
-        return self.slots[slot_offset]
+        if slot_offset in self.slots:
+            return self.slots[slot_offset]
+        else:
+            return []
 
     def get_cells_at_asn(self, asn):
         slot_offset = asn % self.length
         return self.get_cells_by_slot_offset(slot_offset)
 
     def get_cells_by_mac_addr(self, mac_addr):
-        if mac_addr in self.cells.keys():
-            return self.cells[mac_addr]
+        if mac_addr in self.cells:
+            return self.cells[mac_addr][:]
         else:
             return []
 
     def get_busy_slots(self):
-        ret_val = []
-        for i in range(self.length):
-            if len(self.slots[i]) > 0:
-                ret_val.append(i)
-        return ret_val
+        busy_slots = self.slots.keys()
+        # busy_slots.sort()
+        return busy_slots
 
     def get_num_slots_to_next_active_cell(self, asn):
-        for diff in range(1, self.length + 1):
+        diff = 1
+        while diff <= self.length:
             slot_offset = (asn + diff) % self.length
-            if len(self.slots[slot_offset]) > 0:
+            if slot_offset in self.slots:
                 return diff
+            diff += 1
         return None
 
     def get_available_slots(self):
@@ -1515,7 +1589,8 @@ class SlotFrame(object):
         :return: a list of slot offsets (int)
         :rtype: list
         """
-        return [i for i, slot in enumerate(self.slots) if len(slot) == 0]
+        all_slots = set(range(self.length))
+        return list(all_slots - set(self.get_busy_slots()))
 
     def get_cells_filtered(self, mac_addr="", cell_options=None):
         """
@@ -1527,7 +1602,7 @@ class SlotFrame(object):
         """
 
         if mac_addr == "":
-            target_cells = chain.from_iterable(self.slots)
+            target_cells = chain.from_iterable(self.slots.values())
         elif mac_addr not in self.cells:
             target_cells = []
         else:
@@ -1545,16 +1620,13 @@ class SlotFrame(object):
         # delete extra cells and slots if reducing slotframe length
         if new_length < self.length:
             # delete cells
-            cells = [c for cells in self.cells.itervalues() for c in cells]
-            for cell in cells:
-                if cell.slot_offset > (new_length + 1):
-                    self.delete(cell)
-            # delete slots
-            self.slots = self.slots[:new_length]
-        # add slots if increasing slotframe length
-        elif new_length > self.length:
-            # add slots
-            self.slots += [[] for _ in range(self.length, new_length)]
+
+            slot_offset = new_length
+            while slot_offset < self.length:
+                if slot_offset in self.slots:
+                    for cell in self.slots[slot_offset]:
+                        self.delete(cell)
+                slot_offset += 1
 
         # apply the new length
         self.length = new_length

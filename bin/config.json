@@ -33,6 +33,7 @@
             "tsch_max_payload_len":                        90,
 
             "sf_class":                                    "SFNone",
+            "msf_limit_autonomous_cell_use":               false,
 
             "tsch_slotDuration":                           0.010,
             "tsch_slotframeLength":                        101,
@@ -43,7 +44,7 @@
             "tsch_tx_queue_size":                          10,
 
 
-            "charge_log_period_s":                         10,
+            "radio_stats_log_period_s":                    60,
 
             "conn_class":                                  "Linear",
             "conn_trace":                                  null,
@@ -52,7 +53,9 @@
             "conn_random_init_min_pdr":                    0.5,
             "conn_random_init_min_neighbors":              3,
 
-            "phy_numChans":                                16
+            "phy_numChans":                                16,
+
+            "motes_eui64":                                 []
         }
     },
     "logging":                                             "all",

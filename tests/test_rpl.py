@@ -393,6 +393,7 @@ def test_dis_config(sim_engine, fixture_dis_mode):
             'rpl_extensions'          : [fixture_dis_mode],
             'secjoin_enabled'         : False,
             'app_pkPeriod'            : 0,
+            'tsch_probBcast_ebProb'   : 0,
             'tsch_keep_alive_interval': 0
         }
     )
@@ -579,7 +580,7 @@ def test_dodag_parent(sim_engine, fixture_rank_value):
         raise NotImplementedError()
 
     # process the global clock
-    sim_engine.asn += 10
+    u.run_until_asn(sim_engine, 10)
 
     # give the dio to 'child'
     child.rpl.action_receiveDIO(dio)
