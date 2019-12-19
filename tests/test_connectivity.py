@@ -1,6 +1,11 @@
 """
 Tests for SimEngine.Connectivity
 """
+from __future__ import print_function
+from __future__ import absolute_import
+from builtins import zip
+from builtins import range
+from builtins import object
 import itertools
 import json
 import gzip
@@ -10,7 +15,7 @@ import types
 
 import pytest
 
-import test_utils as u
+from . import test_utils as u
 import SimEngine.Mote.MoteDefines as d
 from SimEngine import SimLog
 from SimEngine.Connectivity import ConnectivityMatrixK7
@@ -287,9 +292,10 @@ def test_propagation(sim_engine, fixture_propagation_test_type):
 
     num_motes = 2
     num_frames = 1000
+    max_tx_retries = 5
     sim_engine = sim_engine(
         diff_config = {
-            'exec_numSlotframesPerRun': num_frames * (d.TSCH_MAXTXRETRIES + 1),
+            'exec_numSlotframesPerRun': num_frames * (max_tx_retries + 1),
             'exec_numMotes'           : num_motes,
             'secjoin_enabled'         : False,
             'app_pkPeriod'            : 0,
@@ -300,6 +306,7 @@ def test_propagation(sim_engine, fixture_propagation_test_type):
             'tsch_slotframeLength'    : 2,
             'tsch_probBcast_ebProb'   : 0,
             'tsch_keep_alive_interval': 0,
+            'tsch_max_tx_retries'     : max_tx_retries,
             'tsch_tx_queue_size'      : num_frames,
             'conn_class'              : 'Linear', # this is intentional
             'phy_numChans'            : 1
@@ -323,7 +330,7 @@ def test_propagation(sim_engine, fixture_propagation_test_type):
                 RSSI_VALUES[fixture_propagation_test_type]
             )
             # dump the connectivity matrix
-            print 'The Connectivity Matrix ("1.0" means PDR of 100%):'
+            print('The Connectivity Matrix ("1.0" means PDR of 100%):')
             self.dump()
 
     # replace the 'Linear' conn_class with the test purpose
@@ -414,6 +421,7 @@ def test_drop_ack(sim_engine, fixture_pdr):
     GOOD_RSSI = -10
     sim_engine = sim_engine(
         diff_config = {
+            'conn_simulate_ack_drop'  : True,
             'exec_numMotes'           : 2,
             'secjoin_enabled'         : False,
             'app_pkPeriod'            : 0,
@@ -450,7 +458,7 @@ def test_drop_ack(sim_engine, fixture_pdr):
                 GOOD_RSSI
             )
             # dump the connectivity matrix
-            print 'The Connectivity Matrix ("1.0" means PDR of 100%):'
+            print('The Connectivity Matrix ("1.0" means PDR of 100%):')
             self.dump()
 
     sim_engine.connectivity.matrix = TestConnectivityMatrixK7(

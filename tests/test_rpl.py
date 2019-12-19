@@ -1,12 +1,18 @@
 """
 Tests for SimEngine.Mote.rpl
 """
+from __future__ import print_function
+from __future__ import absolute_import
+from __future__ import division
 
+from builtins import range
+from builtins import object
+from past.utils import old_div
 import types
 
 import pytest
 
-import test_utils as u
+from . import test_utils as u
 import SimEngine.Mote.MoteDefines as d
 import SimEngine.Mote.rpl as rpl
 from SimEngine import SimLog
@@ -187,15 +193,14 @@ class TestOF0(object):
 
             # set numTx and numTxAck
             preferred_parent = mote.rpl.of.preferred_parent
-            autonomous_cell = mote.tsch.get_cells(
-                mac_addr         = preferred_parent['mac_addr'],
-                slotframe_handle = mote.sf.SLOTFRAME_HANDLE
+            negotiated_tx_cell = mote.sf.get_tx_cells(
+                preferred_parent['mac_addr']
             )[0]
             preferred_parent['numTx'] = 99
             preferred_parent['numTxAck'] = 74
             # inform RPL of the 100th transmission that is success
             mote.rpl.of.update_etx(
-                cell     = autonomous_cell,
+                cell     = negotiated_tx_cell,
                 mac_addr = preferred_parent['mac_addr'],
                 isACKed  = True
             )
@@ -204,7 +209,7 @@ class TestOF0(object):
         assert motes[0].rpl.get_rank()   == 256
         assert motes[0].rpl.getDagRank() == 1
 
-        print motes[1].rpl.of.preferred_parent
+        print(motes[1].rpl.of.preferred_parent)
         assert motes[1].rpl.get_rank()   == 768
         assert motes[1].rpl.getDagRank() == 3
 
@@ -361,8 +366,8 @@ class TestOF0(object):
         preferred_parent = mote.rpl.of.preferred_parent
         preferred_parent['numTx'] = 99
         preferred_parent['numTxAck'] = (
-            preferred_parent['numTx'] /
-            mote.rpl.of.UPPER_LIMIT_OF_ACCEPTABLE_ETX
+            old_div(preferred_parent['numTx'],
+            mote.rpl.of.UPPER_LIMIT_OF_ACCEPTABLE_ETX)
         )
         mote.rpl.of.update_etx(cell, root.get_mac_addr(), isACKed=False)
 
