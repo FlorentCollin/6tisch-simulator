@@ -33,7 +33,6 @@
             "tsch_max_payload_len":                        90,
 
             "sf_class":                                    "SFNone",
-            "msf_limit_autonomous_cell_use":               false,
 
             "tsch_slotDuration":                           0.010,
             "tsch_slotframeLength":                        101,
@@ -42,11 +41,14 @@
             "tsch_clock_frequency":                        32768,
             "tsch_keep_alive_interval":                    10,
             "tsch_tx_queue_size":                          10,
+            "tsch_max_tx_retries":                         5,
 
 
             "radio_stats_log_period_s":                    60,
 
             "conn_class":                                  "Linear",
+            "conn_simulate_ack_drop":                      false,
+
             "conn_trace":                                  null,
 
             "conn_random_square_side":                     2.000,

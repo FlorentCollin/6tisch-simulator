@@ -1,3 +1,4 @@
+from __future__ import print_function
 import json
 import os
 import subprocess
@@ -28,7 +29,7 @@ CONFIG_JSON_TEMPLATE = {
 
 
 def on_close_callback(page, sockets):
-    print 'Detect a WebSocket is closed; keep running'
+    print('Detect a WebSocket is closed; keep running')
     backend.sim.clear_sim()
 
 
@@ -60,18 +61,16 @@ def _start(dev_mode):
         listen_port = backend.LISTEN_PORT_FOR_DEVELOPMENT
     else:
         listen_port = backend.LISTEN_PORT_FOR_PRODUCTION
-    print 'Starting the backend server on {0}:{1}'.format(
+    print('Starting the backend server on {0}:{1}'.format(
         config['host'],
         listen_port
-    )
+    ))
     sys.stdout.flush()
     eel.start(
         backend.START_URL,
-        options = {
-            'host': config['host'],
-            'port': listen_port,
-            'mode': None
-        },
+        host     = config['host'],
+        port     = listen_port,
+        mode     = None,
         callback = on_close_callback
     )
 
@@ -116,7 +115,7 @@ def create_config_json():
 
 def _delete_config_json():
     if os.path.exists(backend.SIM_CONFIG_PATH):
-        print 'removing {0}'.format(backend.SIM_CONFIG_PATH)
+        print('removing {0}'.format(backend.SIM_CONFIG_PATH))
         os.remove(backend.SIM_CONFIG_PATH)
 
 
@@ -125,5 +124,5 @@ def _delete_tmp_files():
         for file_name in files:
             if file_name.startswith('tmp'):
                 tmp_file_path = os.path.join(root, file_name)
-                print 'removing {0}'.format(tmp_file_path)
+                print('removing {0}'.format(tmp_file_path))
                 os.remove(tmp_file_path)

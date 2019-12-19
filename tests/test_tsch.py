@@ -1,12 +1,17 @@
 """
 Test for TSCH layer
 """
+from __future__ import absolute_import
+from __future__ import division
 
+from builtins import zip
+from builtins import range
+from past.utils import old_div
 import copy
 import pytest
 import types
 
-import test_utils as u
+from . import test_utils as u
 import SimEngine.Mote.MoteDefines as d
 from SimEngine import SimLog
 from SimEngine.Mote import tsch
@@ -88,7 +93,7 @@ def test_enqueue_with_priority(sim_engine):
     mote.tsch.enqueue(priority_packet, priority=True)
     # now we have the priority packet first in the TX queue
     assert (
-        map(lambda x: x['seq'], mote.tsch.txQueue) ==
+        [x['seq'] for x in mote.tsch.txQueue] ==
         [2, 1]
     )
 
@@ -98,7 +103,7 @@ def test_enqueue_with_priority(sim_engine):
     normal_packet['seq'] = 3
     mote.tsch.enqueue(normal_packet, priority=False)
     assert (
-        map(lambda x: x['seq'], mote.tsch.txQueue) ==
+        [x['seq'] for x in mote.tsch.txQueue] ==
         [2, 1, 3]
     )
 
@@ -109,7 +114,7 @@ def test_enqueue_with_priority(sim_engine):
     mote.tsch.enqueue(priority_packet, priority=True)
     # now we have the priority packet first in the TX queue
     assert (
-        map(lambda x: x['seq'], mote.tsch.txQueue) ==
+        [x['seq'] for x in mote.tsch.txQueue] ==
         [2, 4, 1, 3]
     )
 
@@ -135,7 +140,7 @@ def test_enqueue_with_priority(sim_engine):
 
     # the first three packets should be priority
     assert (
-        map(lambda x: x['seq'], mote.tsch.txQueue[0:3]) ==
+        [x['seq'] for x in mote.tsch.txQueue[0:3]] ==
         [2, 4, new_pkt_seq]
     )
     # the TX queue length shouldn't exceed the queue size
@@ -317,6 +322,7 @@ def cell_type(request):
     return request.param
 
 def test_retransmission_count(sim_engine):
+    max_tx_retries = 5
     sim_engine = sim_engine(
         diff_config = {
             'exec_numSlotframesPerRun': 10,
@@ -326,6 +332,7 @@ def test_retransmission_count(sim_engine):
             'tsch_probBcast_ebProb'   : 0,
             'secjoin_enabled'         : False,
             'tsch_keep_alive_interval': 0,
+            'tsch_max_tx_retries'     : max_tx_retries,
             'conn_class'              : 'Linear'
         },
         force_initial_routing_and_scheduling_state = True
@@ -360,20 +367,22 @@ def test_retransmission_count(sim_engine):
 
     # hop1 should send out the frame six times: 1 for the initial transmission
     # and 5 for retransmissions
-    assert len(tx_logs) == 1 + d.TSCH_MAXTXRETRIES
+    assert len(tx_logs) == 1 + max_tx_retries
     for tx_log in tx_logs:
         assert tx_log['packet']['type'] == d.PKT_TYPE_DATA
         assert hop1.is_my_ipv6_addr(tx_log['packet']['net']['srcIp'])
         assert tx_log['packet']['app']['appcounter'] == 0
 
 def test_retransmission_backoff_algorithm(sim_engine, cell_type):
+    max_tx_retries = 100
     sim_engine = sim_engine(
         diff_config = {
             'exec_numSlotframesPerRun': 10000,
             'exec_numMotes'           : 2,
             'app_pkPeriod'            : 0,
             'secjoin_enabled'         : False,
-            'tsch_keep_alive_interval': 0
+            'tsch_keep_alive_interval': 0,
+            'tsch_max_tx_retries'     : max_tx_retries
         }
     )
     sim_log = SimLog.SimLog()
@@ -385,10 +394,6 @@ def test_retransmission_backoff_algorithm(sim_engine, cell_type):
     root  = sim_engine.motes[0]
     hop_1 = sim_engine.motes[1]
     slotframe_length = sim_engine.settings.tsch_slotframeLength
-
-    # increase TSCH_MAXTXRETRIES so that we can have enough retransmission
-    # samples to validate
-    d.TSCH_MAXTXRETRIES = 100
 
     #== test setup ==
 
@@ -453,7 +458,7 @@ def test_retransmission_backoff_algorithm(sim_engine, cell_type):
             ):
             app_data_tx_logs.append(log)
 
-    assert len(app_data_tx_logs) == 1 + d.TSCH_MAXTXRETRIES
+    assert len(app_data_tx_logs) == 1 + max_tx_retries
 
     # all transmission should have happened only on the dedicated cell if it's
     # available (it shouldn't transmit a unicast frame to the root on the
@@ -475,7 +480,7 @@ def test_retransmission_backoff_algorithm(sim_engine, cell_type):
     # is, one slotframe, this means there was no backoff wait between
     # transmissions.
     timestamps = [log['_asn'] for log in app_data_tx_logs]
-    diffs = map(lambda x: x[1] - x[0], zip(timestamps[:-1], timestamps[1:]))
+    diffs = [x[1] - x[0] for x in zip(timestamps[:-1], timestamps[1:])]
     assert len([diff for diff in diffs if diff != slotframe_length]) > 0
 
 def test_eb_by_root(sim_engine):
@@ -498,7 +503,13 @@ def test_select_active_tx_cell(sim_engine):
     # this test is for a particular case; it's not a general test for
     # Tsch._select_active_cell()
 
-    sim_engine = sim_engine(diff_config={'exec_numMotes': 3})
+    max_tx_retries = 5
+    sim_engine = sim_engine(
+        diff_config = {
+            'exec_numMotes'         : 3,
+            'tsch_max_tx_retries': max_tx_retries
+        }
+    )
     mote = sim_engine.motes[0]
     neighbor_mac_addr_1 = sim_engine.motes[1].get_mac_addr()
     neighbor_mac_addr_2 = sim_engine.motes[2].get_mac_addr()
@@ -514,7 +525,7 @@ def test_select_active_tx_cell(sim_engine):
         'type': d.PKT_TYPE_DATA,
         'mac': {
             'dstMac': neighbor_mac_addr_1,
-            'retriesLeft': d.TSCH_MAXTXRETRIES
+            'retriesLeft': max_tx_retries
         }
     }
     mote.tsch.txQueue.append(frame_1)
@@ -525,14 +536,14 @@ def test_select_active_tx_cell(sim_engine):
         'type': d.PKT_TYPE_DATA,
         'mac': {
             'dstMac': neighbor_mac_addr_2,
-            'retriesLeft': d.TSCH_MAXTXRETRIES
+            'retriesLeft': max_tx_retries
         }
     }
     frame_3 = {
         'type': d.PKT_TYPE_DATA,
         'mac': {
             'dstMac': neighbor_mac_addr_2,
-            'retriesLeft': d.TSCH_MAXTXRETRIES
+            'retriesLeft': max_tx_retries
         }
     }
     frame_2['mac']['retriesLeft'] -= 1
@@ -724,7 +735,7 @@ def test_cell_comparison(fixture_cell_comparison_test_type):
         'channel_offset': 2,
         'options'       : [d.CELLOPTION_TX],
         'mac_addr'      : None,
-        'is_advertising': False
+        'link_type'     : d.LINKTYPE_NORMAL
     }
     cell_1 = tsch.Cell(**cell_attributes)
 
@@ -740,7 +751,7 @@ def test_cell_comparison(fixture_cell_comparison_test_type):
     elif fixture_cell_comparison_test_type == 'mac_addr':
         cell_attributes['mac_addr'] = 'dummy_mac_addr'
     elif fixture_cell_comparison_test_type == 'link_type':
-        cell_attributes['is_advertising'] = True
+        cell_attributes['link_type'] = d.LINKTYPE_ADVERTISING
     else:
         raise NotImplementedError()
 
@@ -793,7 +804,7 @@ def test_advertising_link(sim_engine):
         channel_offset = 1,
         options        = minimal_cell.options,
         mac_addr       = None,
-        is_advertising = False
+        link_type      = d.LINKTYPE_NORMAL
     )
     assert normal_cell.link_type == d.LINKTYPE_NORMAL
     slotframe.add(normal_cell)
@@ -867,7 +878,7 @@ def test_eb_wait_timer(sim_engine, fixture_clock_source):
         sim_engine,
         (
             sim_engine.getAsn() +
-            d.TSCH_MAX_EB_DELAY / sim_engine.settings.tsch_slotDuration - 1
+            old_div(d.TSCH_MAX_EB_DELAY, sim_engine.settings.tsch_slotDuration) - 1
         )
     )
     assert mote_1.tsch.isSync is False
@@ -985,3 +996,26 @@ def test_desync(
         log = logs[0]
         assert log['_mote_id'] == mote.id
         assert log['_asn'] == d.TSCH_DESYNCHRONIZED_TIMEOUT_SLOTS
+
+def test_tx_queue_of_infinite_size(sim_engine):
+    sim_engine = sim_engine(
+        diff_config = {
+            'exec_numMotes'     : 1,
+            'tsch_tx_queue_size': -1
+        }
+    )
+    mote = sim_engine.motes[0]
+
+    # put 100 packets to tx queue
+    num_packets = 100
+    for _ in range(num_packets):
+        packet = {
+            'type': d.PKT_TYPE_DATA,
+            'mac' : {
+                'srcMac': mote.get_mac_addr(),
+                'dstMac': mote.get_mac_addr()
+            }
+        }
+        mote.tsch.enqueue(packet)
+
+    assert len(mote.tsch.txQueue) == num_packets

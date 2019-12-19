@@ -1,9 +1,11 @@
+from __future__ import absolute_import
+from builtins import object
 import copy
 import types
 
 import pytest
 
-import test_utils as u
+from . import test_utils as u
 import SimEngine.Mote.MoteDefines as d
 from SimEngine.Mote.sf import SchedulingFunctionBase
 from SimEngine         import SimLog
@@ -47,7 +49,10 @@ class SchedulingFunctionTest(SchedulingFunctionBase):
     def indication_neighbor_deleted(self,neighbor):
         pass
 
-    def indication_dedicated_tx_cell_elapsed(self,cell,used):
+    def indication_tx_cell_elapsed(self, cell, sent_packet):
+        pass
+
+    def indication_rx_cell_elapsed(self, cell, received_packet):
         pass
 
     def indication_parent_change(self, old_parent, new_parent):
@@ -274,7 +279,7 @@ def scheduling_function(request):
 # =========================== tests ===========================================
 
 
-class TestTransaction:
+class TestTransaction(object):
 
     def test_transaciton_type(self, sim_engine, scheduling_function):
 
@@ -593,7 +598,7 @@ class TestTransaction:
         assert len(mote.sixp.transaction_table) == 0
         assert len(mote.tsch.txQueue) == 0
 
-class TestSeqNum:
+class TestSeqNum(object):
 
     @pytest.fixture(params=[0, 1, 2, 100, 200, 254, 255])
     def initial_seqnum(self, request):
