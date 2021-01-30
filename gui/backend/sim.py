@@ -14,53 +14,80 @@ import sys
 import time
 import types
 import traceback
+
 import eel
 import gevent
 import psutil
+
 import backend
 import backend.utils
-from SimEngine import (SimEngine, SimSettings, SimLog)
+from SimEngine import (
+    SimEngine,
+    SimSettings,
+    SimLog
+)
+
+
 DUMMY_COMBINATION_KEYS = ['exec_numMotes']
 SIM_LOG_FILTERS = 'all'
 DEFAULT_LOG_NOTIFICATION_FILTER = [
     SimLog.LOG_SIMULATOR_STATE['type'],
-    SimLog.LOG_SIMULATOR_RANDOM_SEED['type'], SimLog.LOG_MAC_ADD_ADDR['type']
+    SimLog.LOG_SIMULATOR_RANDOM_SEED['type'],
+    SimLog.LOG_MAC_ADD_ADDR['type']
 ]
 GEVENT_SLEEP_SECONDS_IN_SIM_ENGINE = 0.001
+
 RETURN_STATUS_SUCCESS = 'success'
 RETURN_STATUS_FAILURE = 'failure'
 RETURN_STATUS_ABORTED = 'aborted'
+
 _sim_engine = None
 _elapsed_minutes = 0
 
 
 # exported functions
+
+
 @eel.expose
 def get_default_config():
     if os.path.exists(backend.SIM_CONFIG_PATH) is False:
         # someone has deleted our config.json file... recreate one
         backend.utils.create_config_json()
+
     with open(backend.SIM_CONFIG_PATH, 'r') as f:
         config = json.load(f)
+
     # convert a path of the trace file to the abosolute one
     original_config_path = os.path.join(backend.get_simulator_path(), 'bin')
     for settings_type in ['combination', 'regular']:
         if 'conn_trace' not in config['settings'][settings_type]:
             continue
         if isinstance(config['settings'][settings_type]['conn_trace'], list):
-            config['settings'][settings_type]['conn_trace'] = list(
-                map(lambda trace_file: os.path.abspath(
-                    os.path.join(original_config_path, trace_file))
-                    if os.path.isabs(trace_file) is False else trace_file))
-        elif (config['settings'][settings_type]['conn_trace']
-              and (os.path.isabs(
-                  config['settings'][settings_type]['conn_trace']) is False)):
+            config['settings'][settings_type]['conn_trace'] = list(map(
+                lambda trace_file:
+                os.path.abspath(os.path.join(original_config_path, trace_file))
+                if os.path.isabs(trace_file) is False
+                else trace_file
+            ))
+        elif (
+                config['settings'][settings_type]['conn_trace']
+                and
+                (
+                    os.path.isabs(
+                        config['settings'][settings_type]['conn_trace']
+                    ) is False
+                )
+            ):
             config['settings'][settings_type]['conn_trace'] = os.path.abspath(
-                os.path.join(original_config_path,
-                             config['settings'][settings_type]['conn_trace']))
+                os.path.join(
+                    original_config_path,
+                    config['settings'][settings_type]['conn_trace']
+                )
+            )
         else:
             # it's an absolute path or None; it doesn't need the coversion
             pass
+
     return config
 
 
@@ -69,49 +96,71 @@ def put_default_config(config_str):
     try:
         config = json.loads(config_str)
     except ValueError:
-        return {'config': None, 'message': 'No JSON object could be decoded'}
+        return {
+            'config': None,
+            'message': 'No JSON object could be decoded'
+        }
+
     new_config = backend.utils.CONFIG_JSON_TEMPLATE.copy()
     if 'settings' not in config:
-        return {'config': None, 'message': '"settings" is missing'}
+        return {
+            'config': None,
+            'message': '"settings" is missing'
+        }
     else:
         new_config['settings'] = config['settings']
-        check_config_json = os.path.join(backend.get_simulator_path(),
-                                         'bin/check_config_json.py')
+        check_config_json = os.path.join(
+        backend.get_simulator_path(),
+        'bin/check_config_json.py'
+    )
+
     # check the given config
     popen = subprocess.Popen(
         [sys.executable, check_config_json, '-s', '-c', '-'],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE)
+        stdin  = subprocess.PIPE,
+        stdout = subprocess.PIPE,
+        stderr = subprocess.PIPE
+    )
     _, stderrdata = popen.communicate(json.dumps(new_config))
+
     if popen.returncode == 0:
         # if the check succeeds, update the default config.json
         new_config['settings'] = config['settings']
         # write the new config to the default config.json file
         with open(backend.SIM_CONFIG_PATH, 'w') as f:
             json.dump(new_config, f)
-        ret = {'config': get_default_config(), 'message': 'success'}
+        ret = {
+            'config': get_default_config(),
+            'message': 'success'
+        }
     else:
         # return error message
-        ret = {'config': None, 'message': stderrdata}
+        ret = {
+            'config': None,
+            'message': stderrdata
+        }
+
     return ret
 
 
 @eel.expose
 def get_available_scheduling_functions():
-    sf_py_path = os.path.join(backend.get_simulator_path(),
-                              'SimEngine/Mote/sf.py')
+    sf_py_path = os.path.join(
+        backend.get_simulator_path(),
+        'SimEngine/Mote/sf.py'
+    )
     ret_val = set()
     with open(sf_py_path, 'r') as f:
         ret_val = set(
-            re.findall(r'SchedulingFunction\w+', f.read(), re.MULTILINE))
+            re.findall(r'SchedulingFunction\w+', f.read(), re.MULTILINE)
+        )
+
     # remove "SchedulingFunctionBase" that is the base (super) class
     # for concrete scheduling function implementations
     ret_val.remove('SchedulingFunctionBase')
+
     # strip leading "SchedulingFunction" and return
-    return [
-        re.sub(r'SchedulingFunction(\w+)', r'\1', elem) for elem in ret_val
-    ]
+    return [re.sub(r'SchedulingFunction(\w+)', r'\1', elem) for elem in ret_val]
 
 
 @eel.expose
@@ -138,66 +187,94 @@ def get_git_info():
     # to prevent memory leak, we will have a separate process to get
     # information of the Git repositories with gitpython:
     # https://gitpython.readthedocs.io/en/stable/intro.html#limitations
-    get_git_info_cmd_path = os.path.join(backend.BACKEND_BASE_PATH,
-                                         'get_git_info')
-    return json.loads(
-        subprocess.check_output([sys.executable, get_git_info_cmd_path]))
+    get_git_info_cmd_path = os.path.join(
+        backend.BACKEND_BASE_PATH,
+        'get_git_info'
+    )
+    return json.loads(subprocess.check_output(
+        [sys.executable, get_git_info_cmd_path])
+    )
 
 
 @eel.expose
 def get_available_connectivities():
-    conn_py_path = os.path.join(backend.get_simulator_path(),
-                                'SimEngine/Connectivity.py')
+    conn_py_path = os.path.join(
+        backend.get_simulator_path(),
+        'SimEngine/Connectivity.py'
+    )
     ret_val = set()
     with open(conn_py_path, 'r') as f:
         ret_val = set(
-            re.findall(r'ConnectivityMatrix\w+', f.read(), re.MULTILINE))
+            re.findall(r'ConnectivityMatrix\w+', f.read(), re.MULTILINE)
+        )
+
     # remove "ConnectivityMatrixBase" that is the base (super) class
     # for concrete scheduling function implementations
     ret_val.remove('ConnectivityMatrixBase')
+
     # strip leading "Connectivity" and return
-    return [
-        re.sub(r'ConnectivityMatrix(\w+)', r'\1', elem) for elem in ret_val
-    ]
+    return [re.sub(r'ConnectivityMatrix(\w+)', r'\1', elem) for elem in ret_val]
 
 
 @eel.expose
 def start(settings, log_notification_filter='all', stderr_redirect=True):
     global _sim_engine
     global _elapsed_minutes
+
     sim_settings = None
     sim_log = None
     ret_val = {}
+
     if _sim_engine is not None:
         return {
-            'status': RETURN_STATUS_FAILURE,
+            'status' : RETURN_STATUS_FAILURE,
             'message': 'SimEngine has been started already',
-            'trace': None
+            'trace'  : None
         }
+
     try:
         sim_settings = SimSettings.SimSettings(
-            cpuID=0, run_id=0, log_root_dir=backend.SIM_DATA_PATH, **settings)
+            cpuID        = 0,
+            run_id       = 0,
+            log_root_dir = backend.SIM_DATA_PATH,
+            **settings
+        )
         start_time = time.time()
-        sim_settings.setLogDirectory('{0}-{1:03d}'.format(
-            time.strftime("%Y%m%d-%H%M%S", time.localtime(start_time)),
-            int(round(start_time * 1000)) % 1000))
+        sim_settings.setLogDirectory(
+            '{0}-{1:03d}'.format(
+                time.strftime(
+                    "%Y%m%d-%H%M%S",
+                    time.localtime(start_time)
+                ),
+                int(round(start_time * 1000)) % 1000
+            )
+        )
         sim_settings.setCombinationKeys(DUMMY_COMBINATION_KEYS)
+
         sim_log = SimLog.SimLog()
         sim_log.set_log_filters(SIM_LOG_FILTERS)
         _overwrite_sim_log_log(log_notification_filter)
-        _save_config_json(sim_settings,
-                          saving_settings={
-                              'combination': {},
-                              'regular': settings.copy()
-                          })
-        crash_report_path = os.path.join(sim_settings.logRootDirectoryPath,
-                                         sim_settings.logDirectory,
-                                         'crash_report.log')
+
+        _save_config_json(
+            sim_settings,
+            saving_settings = {
+                'combination': {},
+                'regular': settings.copy()
+            }
+        )
+
+        crash_report_path = os.path.join(
+            sim_settings.logRootDirectoryPath,
+            sim_settings.logDirectory,
+            'crash_report.log'
+        )
         if stderr_redirect is True:
             _redirect_stderr(redirect_to=open(crash_report_path, 'w'))
+
         _sim_engine = SimEngine.SimEngine()
         _elapsed_minutes = 0
         _overwrite_sim_engine_actionEndSlotframe()
+
         # start and wait until the simulation ends
         _sim_engine.start()
         _sim_engine.join()
@@ -206,8 +283,10 @@ def start(settings, log_notification_filter='all', stderr_redirect=True):
         ret_val['message'] = str(e)
         ret_val['trace'] = traceback.format_exc()
     else:
-        if _sim_engine.getAsn() == (sim_settings.exec_numSlotframesPerRun *
-                                    sim_settings.tsch_slotframeLength):
+        if _sim_engine.getAsn() == (
+                sim_settings.exec_numSlotframesPerRun *
+                sim_settings.tsch_slotframeLength
+            ):
             ret_val['status'] = RETURN_STATUS_SUCCESS
             # rename .dat file and remove the subdir
             dat_file_path = sim_settings.getOutputFile()
@@ -227,6 +306,7 @@ def start(settings, log_notification_filter='all', stderr_redirect=True):
                 os.remove(crash_report.name)
             else:
                 ret_val['crash_report_path'] = crash_report.name
+
         # cleanup
         if _sim_engine is None:
             if sim_settings is not None:
@@ -235,12 +315,14 @@ def start(settings, log_notification_filter='all', stderr_redirect=True):
                 sim_log.destroy()
         else:
             _destroy_sim()
+
     return ret_val
 
 
 @eel.expose
 def pause():
     global _sim_engine
+
     try:
         # we cannot make the simulation pause on the current ASN because
         # of a limitation of the event scheduler; so we schedule pause on
@@ -248,27 +330,32 @@ def pause():
         _sim_engine.pauseAtAsn(_sim_engine.getAsn() + 1)
     except Exception as e:
         return {
-            'status': RETURN_STATUS_FAILURE,
+            'status':  RETURN_STATUS_FAILURE,
             'message': e,
             'trace': traceback.format_exc()
         }
     else:
-        return {'status': RETURN_STATUS_SUCCESS}
+        return {
+            'status': RETURN_STATUS_SUCCESS
+        }
 
 
 @eel.expose
 def resume():
     global _sim_engine
+
     try:
         _sim_engine.play()
     except Exception as e:
         return {
-            'status': RETURN_STATUS_FAILURE,
+            'status':  RETURN_STATUS_FAILURE,
             'message': e,
             'trace': traceback.format_exc()
         }
     else:
-        return {'status': RETURN_STATUS_SUCCESS}
+        return {
+            'status': RETURN_STATUS_SUCCESS
+        }
 
 
 @eel.expose
@@ -278,12 +365,14 @@ def abort():
         _destroy_sim()
     except Exception as e:
         return {
-            'status': RETURN_STATUS_FAILURE,
+            'status':  RETURN_STATUS_FAILURE,
             'message': e,
             'trace': traceback.format_exc()
         }
     else:
-        return {'status': RETURN_STATUS_SUCCESS}
+        return {
+            'status': RETURN_STATUS_SUCCESS
+        }
 
 
 @eel.expose
@@ -312,21 +401,26 @@ def get_total_number_of_results():
 def get_results(start_index, max_num_results):
     results = sorted(os.listdir(backend.SIM_DATA_PATH), reverse=True)
     end_index = start_index + max_num_results
+
     ret = []
     for result in results[start_index:end_index]:
         result_path = os.path.join(backend.SIM_DATA_PATH, result)
         last_modified = time.strftime(
-            '%b %d %Y %H:%M:%S', time.localtime(os.path.getmtime(result_path)))
+            '%b %d %Y %H:%M:%S',
+            time.localtime(os.path.getmtime(result_path))
+        )
         try:
             with open(os.path.join(result_path, 'config.json')) as f:
                 config = json.load(f)
                 settings = config['settings']['regular']
                 assert len(config['settings']['combination'])
                 assert 'exec_numMotes' in config['settings']['combination']
-                assert (len(
-                    config['settings']['combination']['exec_numMotes']) == 1)
+                assert (
+                    len(config['settings']['combination']['exec_numMotes']) == 1
+                )
                 settings['exec_numMotes'] = (
-                    config['settings']['combination']['exec_numMotes'][0])
+                    config['settings']['combination']['exec_numMotes'][0]
+                )
         except (IOError, ValueError, TypeError):
             settings = None
         ret.append({
@@ -334,6 +428,7 @@ def get_results(start_index, max_num_results):
             'last_modified': last_modified,
             'settings': settings
         })
+
     return ret
 
 
@@ -347,6 +442,7 @@ def shutdown_backend():
         elif 'backend/start' in proc.info['cmdline']:
             if proc.info['pid'] == parent_pid:
                 parent_backend_server_process = proc
+
     if parent_backend_server_process is None:
         # this backend process was invoked directly
         os.kill(os.getpid(), signal.SIGINT)
@@ -358,27 +454,30 @@ def shutdown_backend():
 
 def _overwrite_sim_engine_actionEndSlotframe():
     global _sim_engine
+
     _sim_engine.original_actionEndSlotframe = _sim_engine._actionEndSlotframe
 
     def _new_actionEndSlotframe(self):
         global _elapsed_minutes
+
         self.original_actionEndSlotframe()
         asn = _sim_engine.getAsn()
-        minutes = math.floor(
-            old_div(asn * _sim_engine.settings.tsch_slotDuration, 60))
+        minutes = math.floor(old_div(asn * _sim_engine.settings.tsch_slotDuration, 60))
         if _elapsed_minutes < minutes:
-            _elapsed_minutes = minutes
-            eel.notifyLogEvent({
-                '_type': '_backend.tick.minute',
-                '_asn': asn,
-                'currentValue': _elapsed_minutes
-            })
+           _elapsed_minutes = minutes
+           eel.notifyLogEvent({
+               '_type': '_backend.tick.minute',
+               '_asn': asn,
+               'currentValue': _elapsed_minutes
+           })
         # we need to yield the CPU explicitly for other tasks because
         # threading is monkey-patched by gevent. see __init__.py.
         gevent.sleep(GEVENT_SLEEP_SECONDS_IN_SIM_ENGINE)
 
-    _sim_engine._actionEndSlotframe = types.MethodType(_new_actionEndSlotframe,
-                                                       _sim_engine)
+    _sim_engine._actionEndSlotframe = types.MethodType(
+        _new_actionEndSlotframe,
+        _sim_engine
+    )
 
 
 def _overwrite_sim_log_log(log_notification_filter):
@@ -391,15 +490,22 @@ def _overwrite_sim_log_log(log_notification_filter):
         _filter = DEFAULT_LOG_NOTIFICATION_FILTER + log_notification_filter
     else:
         raise RuntimeError('unsupported type for log_notification_filter')
+
     sim_log = SimLog.SimLog()
     sim_log.original_log = sim_log.log
 
     def _new_log(self, simlog, content):
         self.original_log(simlog, content)
+
         # content is expected to be updated adding _asn, _type
         assert '_asn' in content
         assert '_type' in content
-        if ((_filter == 'all') or (content['_type'] in _filter)):
+
+        if (
+                (_filter == 'all')
+                or
+                (content['_type'] in _filter)
+            ):
             eel.notifyLogEvent(content)
         else:
             pass
@@ -413,10 +519,14 @@ def _save_config_json(sim_settings, saving_settings):
         saving_settings['regular']['exec_numMotes']
     ]
     del saving_settings['regular']['exec_numMotes']
+
     saving_config = get_default_config()
     saving_config['settings'] = saving_settings
-    saving_config_path = os.path.join(sim_settings.logRootDirectoryPath,
-                                      sim_settings.logDirectory, 'config.json')
+    saving_config_path = os.path.join(
+        sim_settings.logRootDirectoryPath,
+        sim_settings.logDirectory,
+        'config.json'
+    )
     with open(saving_config_path, 'w') as f:
         json.dump(saving_config, f, indent=4)
 
@@ -434,13 +544,16 @@ def _restore_stderr():
 def _destroy_sim():
     global _sim_engine
     global _elapsed_minutes
+
     sim_log = SimLog.SimLog()
     connectivity = _sim_engine.connectivity
     sim_settings = _sim_engine.settings
+
     _sim_engine.destroy()
     sim_log.destroy()
     connectivity.destroy()
     sim_settings.destroy()
+
     _sim_engine = None
     _elapsed_minutes = 0
 

@@ -1,6 +1,7 @@
 import eel
 import gevent
 import pytest
+
 import backend.sim
 from SimEngine import SimLog
 
@@ -17,9 +18,11 @@ def log_events():
         notifyLogEvent_backup = eel.notifyLogEvent
     else:
         notifyLogEvent_backup = None
+
     _events = []
     eel.notifyLogEvent = lambda logEvent: _events.append(logEvent)
     yield _events
+
     if notifyLogEvent_backup is None:
         # nothing to do
         pass
@@ -34,21 +37,30 @@ def test_log(log_notification_filter, log_events):
     settings = config['settings']['regular']
     for key in config['settings']['combination']:
         settings[key] = config['settings']['combination'][key][0]
+
     # use a short exec_numSlotframesPerRun so that this test ends in a
     # short time
     settings['exec_numSlotframesPerRun'] = 100
+
     # invoke start()
-    sim_greenlet = gevent.spawn(backend.sim.start, settings,
-                                log_notification_filter)
+    sim_greenlet = gevent.spawn(
+        backend.sim.start,
+        settings,
+        log_notification_filter
+    )
     gevent.sleep(backend.sim.GEVENT_SLEEP_SECONDS_IN_SIM_ENGINE)
     assert backend.sim._sim_engine is not None
+
     # find the log file for the simulation
     log_file_path = SimLog.SimLog().log_output_file.name
     assert log_file_path is not None
+
     # run the simulation until it ends
     gevent.joinall([sim_greenlet])
+
     # _sim_engine should have gone
     assert backend.sim._sim_engine is None
+
     if log_notification_filter == 'all':
         # we should have all the log items notified which have been
         # generated during the simulation. to make the test simple, we
@@ -70,13 +82,14 @@ def test_log(log_notification_filter, log_events):
         _filter = (
             log_notification_filter +
             backend.sim.DEFAULT_LOG_NOTIFICATION_FILTER +
-            ['_backend.tick.minute']  # special log event for GUI
+            ['_backend.tick.minute'] # special log event for GUI
         )
         _log_types = []
         for event in log_events:
             assert event['_type'] in _filter
             if event['_type'] not in _log_types:
                 _log_types.append(event['_type'])
+
         # we should always have logs of the types specifined by
         # DEFAULT_LOG_NOTIFICATION_FILTER
         for default_log_type in backend.sim.DEFAULT_LOG_NOTIFICATION_FILTER:
