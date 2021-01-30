@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python2
 """
 \brief Holds the overall configuration of a simulation.
 Configuration is read from a configuration file, and accessible in dotted

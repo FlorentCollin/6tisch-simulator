@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python2
 """
 \brief Entry point to the simulator. Starts a batch of simulations concurrently.
 \author Thomas Watteyne <watteyne@eecs.berkeley.edu>

@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python2
 """
 \brief Container for the settings of a simulation run.
 \author Thomas Watteyne <thomas.watteyne@inria.fr>

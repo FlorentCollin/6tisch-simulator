@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python2
 """
 Creates a connectivity matrix and provide methods to get the connectivity
 between two motes.
