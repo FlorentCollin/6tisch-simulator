@@ -1,10 +1,9 @@
 import os
 import subprocess
 
+
 #============================ helpers =========================================
-
 #============================ tests ===========================================
-
 def test_runSim():
     wd = os.getcwd()
     os.chdir("bin/")
@@ -13,4 +12,4 @@ def test_runSim():
         shell=True,
     )
     os.chdir(wd)
-    assert rc==0
+    assert rc == 0

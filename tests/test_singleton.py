@@ -1,18 +1,17 @@
 import pytest
-
 from SimEngine.SimEngine import SimEngine
 from SimEngine.SimSettings import SimSettings
 from SimEngine.SimLog import SimLog
 from SimEngine.Connectivity import Connectivity
 
-# =========================== fixtures ========================================
 
+# =========================== fixtures ========================================
 @pytest.fixture(params=[SimSettings, SimEngine, Connectivity, SimLog])
 def singleton_class(request):
     return request.param
 
-# =========================== tests ===========================================
 
+# =========================== tests ===========================================
 def test_instantiate(sim_engine, singleton_class):
     sim_engine = sim_engine()
     instance_1 = singleton_class()
