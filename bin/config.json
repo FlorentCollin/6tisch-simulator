@@ -21,6 +21,7 @@
             "app_pkLength":                                90,
             "app_burstTimestamp":                          null,
             "app_burstNumPackets":                         0,
+            "app_firstPacketDelay":                        0,
 
             "rpl_of":                                      "OF0",
             "rpl_daoPeriod":                               60,
