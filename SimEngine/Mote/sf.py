@@ -200,33 +200,28 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
 
     def indication_tx_cell_elapsed(self, cell, sent_packet):
         preferred_parent = self.mote.rpl.getPreferredParent()
-        if (
-                preferred_parent
-                and
-                (cell.mac_addr == preferred_parent)
-                and
-                (cell.options == [d.CELLOPTION_TX])
-            ):
+        if (preferred_parent
+            and
+            cell.mac_addr == preferred_parent
+            and
+            cell.options == [d.CELLOPTION_TX]):
+
             self._update_cell_counters(self.TX_CELL_OPT, bool(sent_packet))
             # adapt number of cells if necessary
             if d.MSF_MAX_NUMCELLS <= self.num_tx_cells_elapsed:
-                tx_cell_utilization = (
-                    self.num_tx_cells_used /
-                    float(self.num_tx_cells_elapsed)
-                )
+                tx_cell_utilization = (self.num_tx_cells_used / float(self.num_tx_cells_elapsed))
                 if tx_cell_utilization != self.tx_cell_utilization:
-                    self.log(
-                        SimEngine.SimLog.LOG_MSF_TX_CELL_UTILIZATION,
-                        {
-                            u'_mote_id'    : self.mote.id,
-                            u'neighbor'    : preferred_parent,
-                            u'value'       : u'{0}% -> {1}%'.format(
-                                int(self.tx_cell_utilization * 100),
-                                int(tx_cell_utilization * 100)
-                            )
-                        }
-                    )
+                    self.log(SimEngine.SimLog.LOG_MSF_TX_CELL_UTILIZATION,
+                            {
+                                u'_mote_id'    : self.mote.id,
+                                u'neighbor'    : preferred_parent,
+                                u'value'       : u'{0}% -> {1}%'.format(
+                                    int(self.tx_cell_utilization * 100),
+                                    int(tx_cell_utilization * 100)
+                                    )
+                            })
                     self.tx_cell_utilization = tx_cell_utilization
+
                 self._adapt_to_traffic(preferred_parent, self.TX_CELL_OPT)
                 self._reset_cell_counters(self.TX_CELL_OPT)
 
@@ -236,22 +231,16 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
             # nothing to do
             return
 
-        if (
-                (cell.mac_addr == preferred_parent)
-                and
-                (cell.options == [d.CELLOPTION_RX])
+        if (cell.mac_addr == preferred_parent
+            and
+            cell.options == [d.CELLOPTION_RX]
             ):
             self._handle_rx_cell_elapsed_event(bool(received_packet))
-        elif (
-                (cell.mac_addr == None)
-                and
-                (
-                    cell.slotframe.slotframe_handle ==
-                    self.SLOTFRAME_HANDLE_AUTONOMOUS_CELLS
-                )
-            ):
-            if (
-                received_packet is None
+        elif (cell.mac_addr == None
+              and
+              cell.slotframe.slotframe_handle == self.SLOTFRAME_HANDLE_AUTONOMOUS_CELLS
+              ):
+            if (received_packet is None
                 or
                 received_packet[u'mac'][u'srcMac'] == preferred_parent
                 ):
@@ -260,9 +249,7 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
                 else:
                     # ignore this notification
                     pass
-            elif (
-                self.get_negotiated_rx_cells(received_packet[u'mac'][u'srcMac'])
-                ):
+            elif (self.get_negotiated_rx_cells(received_packet[u'mac'][u'srcMac'])):
                 self._handle_rx_cell_elapsed_event(False)
                 assert cell.options == [d.CELLOPTION_RX]
                 # we received a packet on our autonomous RX cell, with the
@@ -290,9 +277,8 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
             )
             if num_tx_cells < self.NUM_INITIAL_NEGOTIATED_TX_CELLS:
                 num_tx_cells = self.NUM_INITIAL_NEGOTIATED_TX_CELLS
-            num_rx_cells = len(
-                [cell for cell in dedicated_cells if cell.options == [d.CELLOPTION_RX]]
-            )
+
+            num_rx_cells = len([cell for cell in dedicated_cells if cell.options == [d.CELLOPTION_RX]])
             if num_rx_cells < self.NUM_INITIAL_NEGOTIATED_RX_CELLS:
                 num_rx_cells = self.NUM_INITIAL_NEGOTIATED_RX_CELLS
         if new_parent:
@@ -361,18 +347,13 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
         # True if we have a TX cell to the current parent
         slotframe = self.mote.tsch.get_slotframe(self.SLOTFRAME_HANDLE_NEGOTIATED_CELLS)
         parent_addr = self.mote.rpl.getPreferredParent()
-        if (
-                (slotframe is None)
-                or
-                (parent_addr is None)
-            ):
+        if (slotframe is None or parent_addr is None):
             tx_cells = []
         else:
             tx_cells = [
                 cell for cell in slotframe.get_cells_by_mac_addr(parent_addr)
                 if cell.options == [d.CELLOPTION_TX]
             ]
-
         if self.mote.dagRoot:
             ret_val = True
         else:
@@ -1282,35 +1263,24 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
         #
         # invert the direction in cell_options
         assert cell_options in [self.TX_CELL_OPT, self.RX_CELL_OPT]
-        if   cell_options == self.TX_CELL_OPT:
+        if cell_options == self.TX_CELL_OPT:
             our_cell_options = self.RX_CELL_OPT
         elif cell_options == self.RX_CELL_OPT:
-            our_cell_options   = self.TX_CELL_OPT
+            our_cell_options = self.TX_CELL_OPT
 
-        if (
-                (
-                    self._are_cells_allocated(
-                        peerMac      = peerMac,
-                        cell_list    = relocating_cells,
-                        cell_options = our_cell_options
-                    ) is True
-                )
+        if (self._are_cells_allocated(
+                peerMac=peerMac,
+                cell_list=relocating_cells,
+                cell_options=our_cell_options) is True
                 and
-                (num_cells <= len(candidate_cells))
-            ):
+                num_cells <= len(candidate_cells)):
             # find available cells in the received candidate cell list
             slots_in_slotframe = set(range(0, self.settings.tsch_slotframeLength))
             slots_in_use       = set(
                 self.mote.tsch.get_busy_slots(self.SLOTFRAME_HANDLE_NEGOTIATED_CELLS)
             )
-            candidate_slots    = set(
-                [c[u'slotOffset'] for c in candidate_cells]
-            )
-            available_slots    = list(
-                candidate_slots.intersection(
-                    set(self._get_available_slots())
-                )
-            )
+            candidate_slots    = set([c[u'slotOffset'] for c in candidate_cells])
+            available_slots    = list(candidate_slots.intersection(set(self._get_available_slots())))
 
             code = d.SIXP_RC_SUCCESS
             cell_list = []
@@ -1354,7 +1324,6 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
 
     # CLEAR command related stuff
     def _receive_clear_request(self, request):
-
         peerMac = request[u'mac'][u'srcMac']
 
         def callback(event, packet):
@@ -1370,9 +1339,7 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
 
     # autonomous cell
     def _compute_autonomous_cell(self, mac_addr):
-        slotframe = self.mote.tsch.get_slotframe(
-            self.SLOTFRAME_HANDLE_AUTONOMOUS_CELLS
-        )
+        slotframe = self.mote.tsch.get_slotframe(self.SLOTFRAME_HANDLE_AUTONOMOUS_CELLS)
         hash_value = self._sax(mac_addr)
 
         slot_offset = int(1 + (hash_value % (slotframe.length - 1)))
@@ -1398,3 +1365,154 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
 
         # assuming T (table size) is 16-bit
         return hash_value & 0xFFFF
+
+#===== otf
+class SchedulingFunctionOTF(SchedulingFunctionMSF):
+
+    def _otf_schedule_housekeeping(self):
+        print("-----------")
+        print("--- OTF ---")
+        print("-----------")
+        self.engine.scheduleIn(
+            delay=self.otfHousekeepingPeriod * (0.9 + 0.2 * random.random()),
+            cb=self._otf_action_housekeeping,
+            uniqueTag=(self.id, '_otf_action_housekeeping'),
+            priority=4,
+        )
+
+    def _otf_action_housekeeping(self):
+        '''
+        OTF algorithm: decides when to add/delete cells.
+        '''
+        with self.dataLock:
+            if not self.dagRoot:
+                #if node does not have parent, or has not joined or is not sync, do not perform OTF
+                if self.preferredParent == None or self.isJoined == False or self.isSync == False:
+                    self._otf_schedule_housekeeping()
+                    return
+
+            # calculate the "moving average" incoming traffic, in pkts since last cycle, per neighbor
+            # collect all neighbors I have RX cells to
+            rxNeighbors = [
+                cell['neighbor'] for (ts, cell) in self.schedule.items()
+                if cell['dir'] == self.DIR_RX
+            ]
+
+            # remove duplicates
+            rxNeighbors = list(set(rxNeighbors))
+            rxNeighbors = sorted(rxNeighbors, key=lambda x: x.id, reverse=True)
+
+            # reset inTrafficMovingAve
+            neighbors = self.inTrafficMovingAve.keys()
+            for neighbor in neighbors:
+                if neighbor not in rxNeighbors:
+                    del self.inTrafficMovingAve[neighbor]
+
+            # set inTrafficMovingAve
+            for neighborOrMe in rxNeighbors + [self]:
+                if neighborOrMe in self.inTrafficMovingAve:
+                    newTraffic = 0
+                    newTraffic += self.inTraffic[
+                        neighborOrMe] * self.OTF_TRAFFIC_SMOOTHING  # new
+                    newTraffic += self.inTrafficMovingAve[neighborOrMe] * (
+                        1 - self.OTF_TRAFFIC_SMOOTHING)  # old
+                    self.inTrafficMovingAve[neighborOrMe] = newTraffic
+                elif self.inTraffic[neighborOrMe] != 0:
+                    self.inTrafficMovingAve[neighborOrMe] = self.inTraffic[
+                        neighborOrMe]
+
+            # reset the incoming traffic statistics, so they can build up until next housekeeping
+            self._otf_resetInboundTrafficCounters()
+
+            # calculate my total generated traffic, in pkt/s
+            genTraffic = 0
+            # generated/relayed by me
+            for neighborOrMe in self.inTrafficMovingAve:
+                genTraffic += self.inTrafficMovingAve[
+                    neighborOrMe] / self.otfHousekeepingPeriod
+            # convert to pkts/cycle
+            genTraffic *= self.settings.slotframeLength * self.settings.slotDuration
+
+            remainingPortion = 0.0
+            parent_portion = self.trafficPortionPerParent.items()
+            # sort list so that the parent assigned larger traffic can be checked first
+            sorted_parent_portion = sorted(parent_portion,
+                                           key=lambda x: x[1],
+                                           reverse=True)
+
+            # split genTraffic across parents, trigger 6top to add/delete cells accordingly
+            for (parent, portion) in sorted_parent_portion:
+                # if some portion is remaining, this is added to this parent
+                if remainingPortion != 0.0:
+                    portion += remainingPortion
+                    remainingPortion = 0.0
+
+                # calculate required number of cells to that parent
+                etx = self._estimateETX(parent)
+                if etx > self.RPL_MAX_ETX:  # cap ETX
+                    etx = self.RPL_MAX_ETX
+                reqCells = int(math.ceil(portion * genTraffic * etx))
+                # calculate the OTF threshold
+                threshold = int(math.ceil(portion * self.settings.otfThreshold))
+                # measure how many cells I have now to that parent
+                nowCells = self.numCellsToNeighbors.get(parent, 0)
+
+                if nowCells == 0 or nowCells < reqCells:
+                    # I don't have enough cells, calculate how many to add
+                    if reqCells > 0:
+                        # according to traffic
+                        numCellsToAdd = reqCells - nowCells + (threshold + 1) / 2
+                    else:
+                        # but at least one cell
+                        numCellsToAdd = 1
+
+                    self._log(self.INFO,
+                        "[otf] not enough cells to {0}: have {1}, need {2}, add {3}",
+                        (parent.id, nowCells, reqCells, numCellsToAdd))
+                    # update mote stats
+                    self._stats_incrementMoteStats('otfAdd')
+                    # have 6top add cells
+                    self._sixtop_cell_reservation_request(parent, numCellsToAdd)
+                    # measure how many cells I have now to that parent
+                    nowCells = self.numCellsToNeighbors.get(parent, 0)
+                    # store handled portion and remaining portion
+                    if nowCells < reqCells:
+                        handledPortion = (float(nowCells) / etx) / genTraffic
+                        remainingPortion = portion - handledPortion
+                        self.trafficPortionPerParent[parent] = handledPortion
+
+                    # remember OTF triggered
+                    otfTriggered = True
+                elif reqCells < nowCells - threshold:
+                    # I have too many cells, calculate how many to remove
+                    numCellsToRemove = nowCells - reqCells
+                    if reqCells == 0: #I want always there is at least 1 cell available
+                        numCellsToRemove = numCellsToRemove - self.settings.otfThreshold - 1
+
+                    # have 6top remove cells
+                    if numCellsToRemove > 0:
+                        self._log(self.INFO,
+                            "[otf] too many cells to {0}:  have {1}, need {2}, remove {3}",
+                            (parent.id, nowCells, reqCells, numCellsToRemove))
+                        self._sixtop_removeCells(parent, numCellsToRemove)
+                        # update mote stats
+                        self._stats_incrementMoteStats('otfRemove')
+                        # remember OTF triggered
+                        otfTriggered = True
+                    else:
+                        otfTriggered = False
+                else:
+                    # nothing to do, remember OTF did NOT trigger
+                    otfTriggered = False
+
+                # maintain stats
+                if otfTriggered:
+                    now = self.engine.getAsn()
+                    if not self.asnOTFevent:
+                        assert not self.timeBetweenOTFevents
+                    else:
+                        self.timeBetweenOTFevents += [now - self.asnOTFevent]
+                    self.asnOTFevent = now
+
+            # schedule next housekeeping
+            self._otf_schedule_housekeeping()
