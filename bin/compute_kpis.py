@@ -296,6 +296,10 @@ def kpis_all(inputfile):
                     '99%': (
                         np.percentile(us_latencies, 99)
                         if us_latencies else 'N/A'
+                    ),
+                    '95%': (
+                        np.percentile(us_latencies, 95)
+                        if us_latencies else 'N/A'
                     )
                 },
                 {
@@ -315,6 +319,10 @@ def kpis_all(inputfile):
                     ),
                     '99%': (
                         np.percentile(us_latencies, 99) / slot_duration
+                        if us_latencies else 'N/A'
+                    ),
+                    '95%': (
+                        np.percentile(us_latencies, 95) / slot_duration
                         if us_latencies else 'N/A'
                     )
                 }
