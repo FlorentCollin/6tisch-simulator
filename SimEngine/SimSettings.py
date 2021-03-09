@@ -15,6 +15,7 @@ from builtins import object
 import math
 import os
 import re
+import errno
 
 # =========================== defines =========================================
 
@@ -122,7 +123,7 @@ class SimSettings(object):
             try:
                 os.makedirs(dirname)
             except OSError as e:
-                if e.errno == os.errno.EEXIST:
+                if e.errno == errno.EEXIST:
                     # FIXME: handle this race condition properly
                     # Another core/CPU has already made this directory
                     pass

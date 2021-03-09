@@ -1390,8 +1390,7 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
             length           = slotframe_0.length
         )
         # @Note maybe handle collision like MSF
-        if not self.mote.dagRoot:
-            self._otf_schedule_housekeeping()
+        self._otf_schedule_housekeeping()
 
     def stop(self):
         self.mote.tsch.delete_slotframe(self.SLOTFRAME_OTF_HANDLE)
@@ -1407,11 +1406,11 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
         """
         [from TSCH] just passed a dedicated TX cell. used=False means we didn't use it.
         """
-        if sent_packet:
+        if sent_packet and sent_packet["type"] == "DATA":
             self.numCellsUsed += 1
 
     def indication_rx_cell_elapsed(self, cell, received_packet):
-        if received_packet and self.mote.rpl.getPreferredParent():
+        if received_packet and received_packet["type"] == "DATA":
             self.numCellsUsed += 1
 
     def indication_parent_change(self, old_parent, new_parent):
@@ -1471,9 +1470,13 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
                 return
 
             # calculate the "moving average" incoming traffic, in pkts since last cycle
-            self.numCellsAvg = (self.numCellsUsed * self.OTF_TRAFFIC_SMOOTHING
-                               + self.numCellsAvg * (1 - self.OTF_TRAFFIC_SMOOTHING))
+            if self.numCellsAvg != 0:
+                self.numCellsAvg = (self.numCellsUsed * self.OTF_TRAFFIC_SMOOTHING
+                                   + self.numCellsAvg * (1 - self.OTF_TRAFFIC_SMOOTHING))
+            else:
+                self.numCellsAvg = self.numCellsUsed
             self.numCellsUsed = 0
+
             parent = self.mote.rpl.getPreferredParent()
             if self.retry_count[parent] != -1:
                 # middle of a 6P transaction
@@ -1500,7 +1503,6 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
             otf_slotframe = self.mote.tsch.slotframes[self.SLOTFRAME_OTF_HANDLE]
             nowCells = len(otf_slotframe.get_cells_filtered(parent, [d.CELLOPTION_TX]))
             # print(f"nowCells: {nowCells}, reqCells: {reqCells}")
-            # breakpoint()
 
             if nowCells == 0 or nowCells < reqCells:
                 # I don't have enough cells, calculate how many to add
