@@ -201,7 +201,7 @@ class AppPeriodic(AppBase):
             # delay = self.settings.tsch_slotDuration + (self.settings.app_pkPeriod * random.random())
             # TEST: send first packet 10 min after boot time like in the evaluation paper
             delay = self.settings.app_firstPacketDelay
-            if delay < 0:
+            if delay <= 0:
                 # compute initial time within the range of [next asn, next asn+pkPeriod]
                 delay = self.settings.tsch_slotDuration + (self.settings.app_pkPeriod * random.random())
 
