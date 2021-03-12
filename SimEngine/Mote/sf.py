@@ -1379,7 +1379,7 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
         super(SchedulingFunctionOTF, self).__init__(mote)
 
         self.numCellsUsed = 0
-        self.numCellsAvg = 0
+        self.numCellsAvg = -1
         self.locked_slots = set()
         self.retry_count = {}
 
@@ -1390,7 +1390,7 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
             length           = slotframe_0.length
         )
         # @Note maybe handle collision like MSF
-        self._otf_schedule_housekeeping()
+        self._schedule_allocation_housekeeping()
 
     def stop(self):
         self.mote.tsch.delete_slotframe(self.SLOTFRAME_OTF_HANDLE)
@@ -1450,15 +1450,15 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
     def clear_to_send_EBs_DATA(self):
         return True # @incomplete
 
-    def _otf_schedule_housekeeping(self):
+    def _schedule_allocation_housekeeping(self):
         self.engine.scheduleIn(
             delay          = self.otfHousekeepingPeriod*(0.9+0.2*random.random()),
-            cb             = self._otf_action_housekeeping,
-            uniqueTag      = (self.mote.id, '_otf_action_housekeeping'),
+            cb             = self._allocation_housekeeping,
+            uniqueTag      = (self.mote.id, '_allocation_housekeeping'),
             intraSlotOrder = d.INTRASLOTORDER_STACKTASKS,
         )
 
-    def _otf_action_housekeeping(self):
+    def _allocation_housekeeping(self):
         '''
         OTF algorithm: decides when to add/delete cells.
         '''
@@ -1466,7 +1466,7 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
             # if node does not have parent, or has not joined or is not sync, do not perform OTF
             if not self.mote.rpl.getPreferredParent() or not self.mote.secjoin.getIsJoined() or not self.mote.tsch.isSync:
                 self.numCellsUsed = 0
-                self._otf_schedule_housekeeping()
+                self._schedule_allocation_housekeeping()
                 return
 
             # calculate the "moving average" incoming traffic, in pkts since last cycle
@@ -1480,7 +1480,7 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
             parent = self.mote.rpl.getPreferredParent()
             if self.retry_count[parent] != -1:
                 # middle of a 6P transaction
-                self._otf_schedule_housekeeping()
+                self._schedule_allocation_housekeeping()
                 return
 
             # calculate my total generated traffic, in pkt/s
@@ -1496,12 +1496,15 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
 
             reqCells = int(math.ceil(genTraffic * etx))
             # calculate the OTF threshold
-            self.settings.otfThreshold = 8 # TODO: Update that in settings
-            threshold = self.settings.otfThreshold
+            # self.settings.otfThreshold = 8 # TODO: Update that in settings
+            # threshold = self.settings.otfThreshold
+            threshold = 8
 
             # measure how many cells I have now to that parent
             otf_slotframe = self.mote.tsch.slotframes[self.SLOTFRAME_OTF_HANDLE]
             nowCells = len(otf_slotframe.get_cells_filtered(parent, [d.CELLOPTION_TX]))
+
+
             # print(f"nowCells: {nowCells}, reqCells: {reqCells}")
 
             if nowCells == 0 or nowCells < reqCells:
@@ -1534,7 +1537,7 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
                     )
 
             # schedule next housekeeping
-            self._otf_schedule_housekeeping()
+            self._schedule_allocation_housekeeping()
 
     def _estimateETX(self, neighbor):
         def pdr(cell):
@@ -2224,3 +2227,108 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
             return_code = d.SIXP_RC_SUCCESS,
             callback    = callback
         )
+
+class SchedulingFunctionEOTF(SchedulingFunctionOTF):
+    def __init__(self, mote):
+        super(SchedulingFunctionEOTF, self).__init__(mote)
+        self.queueOccupancyAvg = -1
+        self.cellsUtilizationAvg = -1
+
+    def _allocation_housekeeping(self):
+        '''
+        OTF algorithm: decides when to add/delete cells.
+        '''
+        with self.mote.dataLock:
+            # if node does not have parent, or has not joined or is not sync, do not perform OTF
+            if not self.mote.rpl.getPreferredParent() or not self.mote.secjoin.getIsJoined() or not self.mote.tsch.isSync:
+                self.numCellsUsed = 0
+                self._schedule_allocation_housekeeping()
+                return
+
+            # calculate the "moving average" incoming traffic, in pkts since last cycle
+            parent = self.mote.rpl.getPreferredParent()
+            slotframe = self.mote.tsch.get_slotframe(self.SLOTFRAME_OTF_HANDLE)
+            if self.numCellsAvg < 0:
+                self.numCellsAvg = self.numCellsUsed
+                self.queueOccupancyAvg = len(self.mote.tsch.txQueue)
+                self.cellsUtilizationAvg = self._cellsUtilization()
+            else:
+                self.numCellsAvg = (self.numCellsUsed * self.OTF_TRAFFIC_SMOOTHING
+                                   + self.numCellsAvg * (1 - self.OTF_TRAFFIC_SMOOTHING))
+                
+                self.queueOccupancyAvg = (self.queueOccupancyAvg * self.OTF_TRAFFIC_SMOOTHING
+                                         + len(self.mote.tsch.txQueue) * (1 - self.OTF_TRAFFIC_SMOOTHING))
+
+                self.cellsUtilizationAvg = (self.cellsUtilizationAvg * self.OTF_TRAFFIC_SMOOTHING
+                                   + self._cellsUtilization() * (1 - self.OTF_TRAFFIC_SMOOTHING))
+
+            # reset counters
+            self.numCellsUsed = 0
+
+            if self.retry_count[parent] != -1:
+                # middle of a 6P transaction
+                self._schedule_allocation_housekeeping()
+                return
+
+            # calculate my total generated traffic, in pkt/s
+            genTraffic = self.numCellsAvg / self.otfHousekeepingPeriod
+            # convert to pkts/cycle
+            genTraffic *= self.settings.tsch_slotframeLength * self.settings.tsch_slotDuration
+
+            # @incomplete define constants update settings file
+            threshold = 8
+            congestionBonus = threshold
+            beta = 0.2
+            alpha = 0.2
+
+            # calculate required number of cells to that parent
+            etx = self._estimateETX(parent)
+            self.RPL_MAX_ETX = 4.0 # @incomplete: update that in RPL or somewhere else and wtf is this number
+            if etx > self.RPL_MAX_ETX:
+                etx = self.RPL_MAX_ETX
+
+            reqCells = int(math.ceil(genTraffic * etx))
+
+            # measure how many cells I have now to that parent
+            otf_slotframe = self.mote.tsch.slotframes[self.SLOTFRAME_OTF_HANDLE]
+            nowCells = len(otf_slotframe.get_cells_filtered(parent, [d.CELLOPTION_TX]))
+            
+            if self.queueOccupancyAvg > beta:
+               deltaCells = congestionBonus 
+            if reqCells > nowCells:
+                deltaCells = reqCells - nowCells + math.ceil(threshold / 2)
+            elif reqCells < nowCells - threshold:
+                if self.cellsUtilizationAvg > alpha:
+                    deltaCells = congestionBonus
+                else:
+                    deltaCells = nowCells - reqCells - math.floor(threshold / 2)
+            else:
+                deltaCells = 0
+
+            if deltaCells > 0:
+                # print(f"[e-otf] not enough cells to {parent}: have {nowCells}, need {reqCells}, add {numCellsToAdd}")
+                self._request_adding_cells(
+                    neighbor     = parent,
+                    num_tx_cells = deltaCells
+                )
+            if deltaCells < 0:
+                # print(f"[e-otf] too many cells to {parent}: have {nowCells}, need {reqCells}, remove {numCellsToRemove}")
+                self._request_deleting_cells(
+                    neighbor     = parent,
+                    num_cells    = deltaCells,
+                    cell_options = self.TX_CELL_OPT
+                )
+
+            # schedule next housekeeping
+            self._schedule_allocation_housekeeping()
+
+    def _cellsUtilization(self):
+        slotframe = self.mote.tsch.get_slotframe(self.SLOTFRAME_OTF_HANDLE)
+        parent = self.mote.rpl.getPreferredParent()
+        if not parent:
+            return 0
+        txCells = slotframe.get_cells_filtered(parent, [d.CELLOPTION_TX])
+        if not txCells:
+            return 0
+
+        return self.numCellsUsed / len(txCells)
