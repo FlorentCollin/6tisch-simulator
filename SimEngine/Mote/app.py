@@ -194,13 +194,14 @@ class AppPeriodic(AppBase):
 
     def _schedule_transmission(self):
         assert self.settings.app_pkPeriod >= 0
-        if self.settings.app_pkPeriod == 0:
+        curr_time = self.engine.getAsn() * self.settings.tsch_slotDuration
+        if self.settings.app_pkPeriod == 0 or curr_time > self.settings.app_stopSending:
             return
 
         if self.sending_first_packet:
             # delay = self.settings.tsch_slotDuration + (self.settings.app_pkPeriod * random.random())
             # TEST: send first packet 10 min after boot time like in the evaluation paper
-            delay = self.settings.app_firstPacketDelay
+            delay = self.settings.app_startSending
             if delay <= 0:
                 # compute initial time within the range of [next asn, next asn+pkPeriod]
                 delay = self.settings.tsch_slotDuration + (self.settings.app_pkPeriod * random.random())

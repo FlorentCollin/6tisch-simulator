@@ -1,27 +1,28 @@
 {
     "version":                                             0,
     "execution": {
-        "numCPUs":                                         1,
-        "numRuns":                                         1
+        "numCPUs":                                         2,
+        "numRuns":                                         4
     },
     "settings": {
         "combination": {
-            "exec_numMotes":                               [4]
+            "exec_numMotes":                               [7]
         },
         "regular": {
-            "exec_numSlotframesPerRun":                    1000,
-            "exec_minutesPerRun":                          null,
+            "exec_numSlotframesPerRun":                    null,
+            "exec_minutesPerRun":                          120,
             "exec_randomSeed":                             "random",
 
             "secjoin_enabled":                             true,
 
             "app":                                         "AppPeriodic",
-            "app_pkPeriod":                                60,
-            "app_pkPeriodVar":                             0.05,
-            "app_pkLength":                                90,
+            "app_pkPeriod":                                0.50,
+            "app_pkPeriodVar":                             0,
+            "app_pkLength":                                30,
             "app_burstTimestamp":                          null,
             "app_burstNumPackets":                         0,
-            "app_firstPacketDelay":                        0,
+            "app_startSending":                            2700,
+            "app_stopSending":                             6300,
 
             "rpl_of":                                      "OF0",
             "rpl_daoPeriod":                               60,
@@ -33,7 +34,7 @@
             "fragmentation_ff_vrb_table_size":             50,
             "tsch_max_payload_len":                        90,
 
-            "sf_class":                                    "SFNone",
+            "sf_class":                                    "MSF",
 
             "tsch_slotDuration":                           0.010,
             "tsch_slotframeLength":                        101,
@@ -41,7 +42,7 @@
             "tsch_clock_max_drift_ppm":                    30,
             "tsch_clock_frequency":                        32768,
             "tsch_keep_alive_interval":                    10,
-            "tsch_tx_queue_size":                          10,
+            "tsch_tx_queue_size":                          8,
             "tsch_max_tx_retries":                         5,
 
 
@@ -61,10 +62,9 @@
             "motes_eui64":                                 []
         }
     },
-    "logging":                                             "all",
-    "log_directory_name":                                  "startTime",
+    "logging":                                             ["tsch.synced", "secjoin.joined", "app.rx", "app.tx", "tsch.add_cell", "tsch.delete_cell", "sixp.comp"] ,
+    "log_directory_name":                                  "sf_class",
     "post": [
-        "python compute_kpis.py",
-        "python plot.py"
+        "python compute.py"
     ]
 }
