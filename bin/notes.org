@@ -1,0 +1,161 @@
+ #+title:Preliminary Analysis of MSF, OTF and E-OTF
+#+author:Florent Collin
+#+date:<2021-03-15 Mon>
+
+# -*- org-src-preserve-indentation: t; org-edit-src-content: 0; -*-
+#+OPTIONS: toc:nil
+#+STARTUP: hideblocks
+* Analysis
+#+BEGIN_SRC elisp :exports none :results none
+(when (get-buffer "*Python*")
+  (kill-buffer "*Python*"))
+#+END_SRC
+
+** Parameters
+|------------------------------------+-------|
+| *Simulation settings and parameters* | *Value* |
+|------------------------------------+-------|
+| TSCH slotframe length              | 101   |
+| TSCH timeslot duration             | 10ms  |
+| TSCH number of channels            | 16    |
+| RPL objective function             | OF0   |
+| APP send packet interval           | 0.5s  |
+| APP first packet delay             | 10m   |
+|------------------------------------+-------|
+
+|------------------------------+-------|
+| *SF Parameters*                | *Value* |
+|------------------------------+-------|
+| MSF - MAX_NUMCELLS           |    64 |
+| MSF - LIM_NUMCELLSUSED_HIGH  |   75% |
+| MSF - LIM_NUMCELLUSED_LOW    |   25% |
+|------------------------------+-------|
+| OTF - T (hysteresis quantum) |     4 |
+|------------------------------+-------|
+
+#+NAME: imports
+#+BEGIN_SRC python :session :exports none
+from analysis import *
+import matplotlib.pyplot as plt
+sf_names = ['MSF', 'OTF']
+stats = load_stats(sf_names)
+#+END_SRC
+#+RESULTS: imports
+
+** Number of 6P transactions completed by SF
+#+BEGIN_SRC python :session :exports results :results file
+plt.figure()
+barplot_sixp_transactions(stats)
+
+filename = 'simData/barplot_sixp_transactions.png'
+plt.savefig(filename);
+filename
+#+END_SRC
+
+#+RESULTS:
+[[file:simData/barplot_sixp_transactions.png]]
+
+** Cumulative number of 6P transactions
+#+BEGIN_SRC python :session :exports results :results file
+plt.figure()
+plot_sixp_transactions(stats, 1)
+
+filename = 'simData/plot_sixp_transactions.png'
+plt.savefig(filename);
+filename
+#+END_SRC
+#+RESULTS:
+[[file:simData/plot_sixp_transactions.png]]
+
+** Maximum number of scheduled cells by SF
+#+BEGIN_SRC python :session :exports results :results file
+plt.figure()
+barplot_max_scheduled_cells(stats)
+
+filename = 'simData/barplot_max_scheduled_cells.png'
+plt.savefig(filename);
+filename
+#+END_SRC
+
+#+RESULTS:
+[[file:simData/barplot_max_scheduled_cells.png]]
+
+** Number of scheduled cells by mote and SF
+#+BEGIN_SRC python :session :exports results :results file
+plt.figure(figsize=(10, 5))
+plot_scheduled_cells_mote(stats, 1)
+
+filename = 'simData/plot_scheduled_cells_mote1.png'
+plt.savefig(filename);
+filename
+#+END_SRC
+
+#+RESULTS:
+[[file:simData/plot_scheduled_cells_mote1.png]]
+
+** Length of TX queue by mote and SF
+#+header: :eval yes
+#+BEGIN_SRC python :session :exports results :results file
+plt.figure(figsize=(10, 5))
+#plot_tx_queue_mote((s for s in stats if s.sf_name in ('MSF', 'EOTF')), 1)
+plot_tx_queue_mote(stats, 1)
+
+filename = 'simData/plot_tx_queue_mote1.png'
+plt.savefig(filename);
+filename
+#+END_SRC
+
+#+RESULTS:
+[[file:simData/plot_tx_queue_mote1.png]]
+
+** E2E Upstream Delivery Ratio
+#+BEGIN_SRC python :session :exports results :results file
+plt.figure()
+barplot_e2e_pdr(stats)
+
+filename = 'simData/barplot_e2e_pdr.png'
+plt.savefig(filename);
+filename
+#+END_SRC
+
+#+RESULTS:
+[[file:simData/barplot_e2e_pdr.png]]
+
+** E2E Upstream Latency
+#+BEGIN_SRC python :session :exports results :results file
+plt.figure()
+barplot_e2e_latency(stats)
+
+filename = 'simData/barplot_e2e_latency.png'
+plt.savefig(filename);
+filename
+#+END_SRC
+
+#+RESULTS:
+[[file:simData/barplot_e2e_latency.png]]
+
+**  Max Joining Time
+#+BEGIN_SRC python :session :exports results :results file
+plt.figure()
+barplot_joining_time(stats)
+
+filename = 'simData/barplot_joining_time.png'
+plt.savefig(filename);
+filename
+#+END_SRC
+
+#+RESULTS:
+[[file:simData/barplot_joining_time.png]]
+
+* Prochaines étapes
+- Regarder pour les interférences radios
+- Des paquets peuvent être perdus à la fin de la simulation et fausser le Upstream Delivery Ratio 
+    -> Solution: arrêter la simulation plus tôt
+- Faire deux phases de mesures et mesurer les indicateurs dans les 2 phases
+  1. Phase de convergence
+  2. Phase stable (quand le réseau à converger)
+- Topologie en arbre intéressante pour étudier les SFs avec aggrégation du traffic
+- Le comportement de MSF est étrange (ajout de plusieurs cellules simultannément)
+  
+Pour l'instant j'ai le temps en secondes pour arrêter l'envoie de paquets
+Je veux ce temps en ASN un tsch_slotDuration * tsch_slotLength
