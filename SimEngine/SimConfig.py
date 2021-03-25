@@ -22,6 +22,7 @@ from builtins import str
 import json
 import glob
 import os
+import shutil
 import platform
 import sys
 import time
@@ -136,7 +137,7 @@ class SimConfig(dict):
         assert SimConfig._log_directory_name is None
 
         # determine log_directory_name
-        if   self.log_directory_name == u'startTime':
+        if self.log_directory_name == u'startTime':
             log_directory_name = u'{0}-{1:03d}'.format(
                 time.strftime(
                     "%Y%m%d-%H%M%S",
@@ -157,6 +158,15 @@ class SimConfig(dict):
                 log_directory_name = u'_'.join((hostname, str(index)))
             else:
                 log_directory_name = hostname
+        elif self.log_directory_name == u'sf_class':
+            sf_class = self.config['settings']['regular']['sf_class']
+            log_directory_path = os.path.join(
+                SimSettings.SimSettings.DEFAULT_LOG_ROOT_DIR,
+                sf_class
+            )
+            if os.path.exists(log_directory_path):
+                shutil.rmtree(log_directory_path)
+            log_directory_name = sf_class
         else:
             raise NotImplementedError(
                 u'log_directory_name "{0}" is not supported'.format(

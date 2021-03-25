@@ -50,8 +50,12 @@ def init_mote():
         'sync_time_s': None,
         'upstream_pkts': {},
         'latencies': [],
-        'scheduled_cells': [],
-        'sixp_transactions': [],
+        'tx_queue_times': [],
+        'tx_queue_length': [],
+        'scheduled_cells_times': [],
+        'scheduled_cells_count': [],
+        'sixp_transactions_times': [],
+        'sixp_transactions_count': [],
         'hops': [],
     }
 
@@ -155,23 +159,31 @@ def kpis_all(inputfile):
             )
             allstats[run_id][mote_id]['upstream_pkts'][appcounter]['rx_asn'] = asn
 
-        elif logline['_type'] in (SimLog.LOG_TSCH_ADD_CELL['type']) and mote_id != DAGROOT_ID:
-            scheduled_cells = allstats[run_id][mote_id]['scheduled_cells']
-            num_cells = 0 if len(scheduled_cells) == 0 else scheduled_cells[-1]['num_scheduled_cells']
+        elif (logline['_type'] in (SimLog.LOG_TSCH_ADD_CELL['type'], SimLog.LOG_TSCH_DELETE_CELL['type'])
+              and logline['slotFrameHandle'] == 2
+              and mote_id != DAGROOT_ID):
+            scheduled_cells_times = allstats[run_id][mote_id]['scheduled_cells_times']
+            scheduled_cells_count = allstats[run_id][mote_id]['scheduled_cells_count']
+            delta = 1 if logline['_type'] == SimLog.LOG_TSCH_ADD_CELL['type'] else -1
+            count_transactions = delta if len(scheduled_cells_count) == 0 else scheduled_cells_count[-1] + delta
             time_s = asn * file_settings['tsch_slotDuration']
-            scheduled_cells.append({'time_s': time_s, 'num_scheduled_cells': num_cells + 1})
-
-        elif logline['_type'] == SimLog.LOG_TSCH_DELETE_CELL['type'] and mote_id != DAGROOT_ID:
-            scheduled_cells = allstats[run_id][mote_id]['scheduled_cells']
-            num_cells = 0 if len(scheduled_cells) == 0 else scheduled_cells[-1]['num_scheduled_cells']
-            time_s = asn * file_settings['tsch_slotDuration']
-            scheduled_cells.append({'time_s': time_s, 'num_scheduled_cells': num_cells - 1})
+            scheduled_cells_times.append(time_s)
+            scheduled_cells_count.append(count_transactions)
 
         elif logline['_type'] == SimLog.LOG_SIXP_TRANSACTION_COMPLETED['type'] and mote_id != DAGROOT_ID:
-            sixp_transactions = allstats[run_id][mote_id]['sixp_transactions']
-            count_transactions = 1 if len(sixp_transactions) == 0 else sixp_transactions[-1]['count'] + 1
+            sixp_transactions_times = allstats[run_id][mote_id]['sixp_transactions_times']
+            sixp_transactions_count = allstats[run_id][mote_id]['sixp_transactions_count']
+            count_transactions = 1 if len(sixp_transactions_count) == 0 else sixp_transactions_count[-1] + 1
             time_s = asn * file_settings['tsch_slotDuration']
-            sixp_transactions.append({'time_s': time_s, 'count': count_transactions})
+            sixp_transactions_times.append(time_s)
+            sixp_transactions_count.append(count_transactions)
+
+        elif logline['_type'] == SimLog.LOG_TSCH_TXQUEUE_LENGTH['type'] and mote_id != DAGROOT_ID:
+            tx_queue_times  = allstats[run_id][mote_id]['tx_queue_times']
+            tx_queue_length = allstats[run_id][mote_id]['tx_queue_length']
+            time_s = asn * file_settings['tsch_slotDuration']
+            tx_queue_times.append(time_s)
+            tx_queue_length.append(int(logline['length']))
 
         # elif logline['_type'] == SimLog.LOG_PACKET_DROPPED['type']:
             # mote_id = logline['_mote_id']
@@ -216,6 +228,7 @@ def kpis_all(inputfile):
         app_packets_lost = 0
         joining_times = []
         us_latencies = []
+        sixp_transactions = []
         slot_duration = file_settings['tsch_slotDuration']
 
         #-- compute stats
@@ -235,8 +248,14 @@ def kpis_all(inputfile):
             # latency
             us_latencies += motestats['latencies']
 
+            # 6P transactions
+            mote_sixp_transactions = motestats['sixp_transactions_count']
+            n_sixp_transactions = mote_sixp_transactions[-1] if mote_sixp_transactions else 0
+            sixp_transactions.append(n_sixp_transactions)
+
         #-- save stats
         allstats[run_id]['global-stats'] = {
+            'sf_class': file_settings['sf_class'],
             'e2e-upstream-delivery': [
                 {
                     'name': 'E2E Upstream Delivery Ratio',
@@ -325,6 +344,26 @@ def kpis_all(inputfile):
                         np.percentile(joining_times, 99)
                         if joining_times else 'N/A'
                     )
+                },
+                {
+                    'name': 'Joining Time',
+                    'unit': 's',
+                    'min': (
+                        min(joining_times) * slot_duration
+                        if joining_times else 'N/A'
+                    ),
+                    'max': (
+                        max(joining_times) * slot_duration
+                        if joining_times else 'N/A'
+                    ),
+                    'mean': (
+                        mean(joining_times) * slot_duration
+                        if joining_times else 'N/A'
+                    ),
+                    '99%': (
+                        np.percentile(joining_times, 99) * slot_duration
+                        if joining_times else 'N/A'
+                    )
                 }
             ],
             'app-packets-sent': [
@@ -344,7 +383,13 @@ def kpis_all(inputfile):
                     'name': 'Number of application packets lost',
                     'total': app_packets_lost
                 }
-            ]
+            ],
+            'sixp-transactions': [
+                {
+                    'name': 'Number of 6P transactions completed',
+                    'total': sum(sixp_transactions) if sixp_transactions else 'N/A'
+                }
+            ],
         }
 
     # === remove unnecessary stats

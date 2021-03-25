@@ -1040,6 +1040,7 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
             cell_options
         )
 
+        self.retry_count[neighbor] = 0
         # send a DELETE request
         self.mote.sixp.send_request(
             dstMac      = neighbor,
@@ -1364,16 +1365,13 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
 
 #===== otf
 class SchedulingFunctionOTF(SchedulingFunctionBase):
-    SLOTFRAME_OTF_HANDLE = 1
+    SLOTFRAME_OTF_HANDLE = 2
     NUM_SUFFICIENT_TX = 10
-    OTF_TRAFFIC_SMOOTHING = 0.5
 
     DEFAULT_CELL_LIST_LEN = 5
     MAX_RETRY = 3
     TX_CELL_OPT   = [d.CELLOPTION_TX]
     RX_CELL_OPT   = [d.CELLOPTION_RX]
-
-    otfHousekeepingPeriod = 1.0
 
     def __init__(self, mote):
         super(SchedulingFunctionOTF, self).__init__(mote)
@@ -1410,6 +1408,7 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
             self.numCellsUsed += 1
 
     def indication_rx_cell_elapsed(self, cell, received_packet):
+        return # @incomplete current try
         if received_packet and received_packet["type"] == "DATA":
             self.numCellsUsed += 1
 
@@ -1421,7 +1420,7 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
         if old_parent:
             self._clear_cells(old_parent)
             self.numCellsUsed = 0
-            self.numCellsAvg = 0
+            self.numCellsAvg = -1
         # @incomplete create 6p transaction to request 
         # the same amount of cells to the new parent
 
@@ -1452,7 +1451,7 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
 
     def _schedule_allocation_housekeeping(self):
         self.engine.scheduleIn(
-            delay          = self.otfHousekeepingPeriod*(0.9+0.2*random.random()),
+            delay          = d.OTF_HOUSEKEEPING_PERIOD * (0.9+ 0.2*random.random()),
             cb             = self._allocation_housekeeping,
             uniqueTag      = (self.mote.id, '_allocation_housekeeping'),
             intraSlotOrder = d.INTRASLOTORDER_STACKTASKS,
@@ -1470,9 +1469,9 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
                 return
 
             # calculate the "moving average" incoming traffic, in pkts since last cycle
-            if self.numCellsAvg != 0:
-                self.numCellsAvg = (self.numCellsUsed * self.OTF_TRAFFIC_SMOOTHING
-                                   + self.numCellsAvg * (1 - self.OTF_TRAFFIC_SMOOTHING))
+            if self.numCellsAvg != -1:
+                self.numCellsAvg = (self.numCellsUsed * d.OTF_TRAFFIC_SMOOTHING
+                                   + self.numCellsAvg * (1 - d.OTF_TRAFFIC_SMOOTHING))
             else:
                 self.numCellsAvg = self.numCellsUsed
             self.numCellsUsed = 0
@@ -1484,7 +1483,7 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
                 return
 
             # calculate my total generated traffic, in pkt/s
-            genTraffic = self.numCellsAvg / self.otfHousekeepingPeriod
+            genTraffic = self.numCellsAvg / d.OTF_HOUSEKEEPING_PERIOD
             # convert to pkts/cycle
             genTraffic *= self.settings.tsch_slotframeLength * self.settings.tsch_slotDuration
 
@@ -1495,15 +1494,11 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
                 etx = self.RPL_MAX_ETX
 
             reqCells = int(math.ceil(genTraffic * etx))
-            # calculate the OTF threshold
-            # self.settings.otfThreshold = 8 # TODO: Update that in settings
-            # threshold = self.settings.otfThreshold
-            threshold = 8
+            threshold = d.OTF_THRESHOLD
 
             # measure how many cells I have now to that parent
             otf_slotframe = self.mote.tsch.slotframes[self.SLOTFRAME_OTF_HANDLE]
-            nowCells = len(otf_slotframe.get_cells_filtered(parent, [d.CELLOPTION_TX]))
-
+            nowCells = len(otf_slotframe.get_cells_filtered(parent, self.TX_CELL_OPT))
 
             # print(f"nowCells: {nowCells}, reqCells: {reqCells}")
 
@@ -1517,6 +1512,7 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
                     numCellsToAdd = 1
 
                 # print(f"[otf] not enough cells to {parent}: have {nowCells}, need {reqCells}, add {numCellsToAdd}")
+                self.retry_count[parent] = 0
                 self._request_adding_cells(
                     neighbor     = parent,
                     num_tx_cells = numCellsToAdd
@@ -1529,7 +1525,8 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
 
                 # have 6top remove cells
                 if numCellsToRemove > 0:
-                    # print(f"[otf] too many cells to {parent}: have {nowCells}, need {reqCells}, remove {numCellsToRemove}")
+                    #print(f"[otf] [{self.mote.get_mac_addr()}]too many cells to {parent}: have {nowCells}, need {reqCells}, remove {numCellsToRemove}")
+                    self.retry_count[parent] = 0
                     self._request_deleting_cells(
                         neighbor     = parent,
                         num_cells    = numCellsToRemove,
@@ -1924,7 +1921,8 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
         cell_list = self._create_occupied_cell_list(
             neighbor      = neighbor,
             cell_options  = cell_options,
-            cell_list_len = self.DEFAULT_CELL_LIST_LEN
+            #cell_list_len = self.DEFAULT_CELL_LIST_LEN
+            cell_list_len = num_cells
         )
         assert len(cell_list) > 0
 
@@ -1984,6 +1982,7 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
                         cell_options = our_cell_options
                 )
         else:
+            breakpoint()
             code      = d.SIXP_RC_ERR
             cell_list = None
             callback  = None
@@ -2253,14 +2252,14 @@ class SchedulingFunctionEOTF(SchedulingFunctionOTF):
                 self.queueOccupancyAvg = len(self.mote.tsch.txQueue)
                 self.cellsUtilizationAvg = self._cellsUtilization()
             else:
-                self.numCellsAvg = (self.numCellsUsed * self.OTF_TRAFFIC_SMOOTHING
-                                   + self.numCellsAvg * (1 - self.OTF_TRAFFIC_SMOOTHING))
-                
-                self.queueOccupancyAvg = (self.queueOccupancyAvg * self.OTF_TRAFFIC_SMOOTHING
-                                         + len(self.mote.tsch.txQueue) * (1 - self.OTF_TRAFFIC_SMOOTHING))
+                self.numCellsAvg = (self.numCellsUsed * d.EOTF_TRAFFIC_SMOOTHING
+                                   + self.numCellsAvg * (1 - d.EOTF_TRAFFIC_SMOOTHING))
 
-                self.cellsUtilizationAvg = (self.cellsUtilizationAvg * self.OTF_TRAFFIC_SMOOTHING
-                                   + self._cellsUtilization() * (1 - self.OTF_TRAFFIC_SMOOTHING))
+                self.queueOccupancyAvg = (self.queueOccupancyAvg * d.EOTF_TRAFFIC_SMOOTHING
+                                         + len(self.mote.tsch.txQueue) * (1 - d.EOTF_TRAFFIC_SMOOTHING))
+
+                self.cellsUtilizationAvg = (self.cellsUtilizationAvg * d.EOTF_TRAFFIC_SMOOTHING
+                                   + self._cellsUtilization() * (1 - d.EOTF_TRAFFIC_SMOOTHING))
 
             # reset counters
             self.numCellsUsed = 0
@@ -2271,15 +2270,16 @@ class SchedulingFunctionEOTF(SchedulingFunctionOTF):
                 return
 
             # calculate my total generated traffic, in pkt/s
-            genTraffic = self.numCellsAvg / self.otfHousekeepingPeriod
+            genTraffic = self.numCellsAvg / d.EOTF_HOUSEKEEPING_PERIOD
             # convert to pkts/cycle
             genTraffic *= self.settings.tsch_slotframeLength * self.settings.tsch_slotDuration
 
             # @incomplete define constants update settings file
-            threshold = 8
+            threshold = d.EOTF_THRESHOLD
             congestionBonus = threshold
-            beta = 0.2
-            alpha = 0.2
+            maxQueueSize = self.mote.tsch.txQueueSize
+            beta = 0.2 * maxQueueSize
+            alpha = 0.2 * maxQueueSize
 
             # calculate required number of cells to that parent
             etx = self._estimateETX(parent)
@@ -2292,9 +2292,9 @@ class SchedulingFunctionEOTF(SchedulingFunctionOTF):
             # measure how many cells I have now to that parent
             otf_slotframe = self.mote.tsch.slotframes[self.SLOTFRAME_OTF_HANDLE]
             nowCells = len(otf_slotframe.get_cells_filtered(parent, [d.CELLOPTION_TX]))
-            
+
             if self.queueOccupancyAvg > beta:
-               deltaCells = congestionBonus 
+               deltaCells = congestionBonus
             if reqCells > nowCells:
                 deltaCells = reqCells - nowCells + math.ceil(threshold / 2)
             elif reqCells < nowCells - threshold:
@@ -2307,12 +2307,14 @@ class SchedulingFunctionEOTF(SchedulingFunctionOTF):
 
             if deltaCells > 0:
                 # print(f"[e-otf] not enough cells to {parent}: have {nowCells}, need {reqCells}, add {numCellsToAdd}")
+                self.retry_count[parent] = 0
                 self._request_adding_cells(
                     neighbor     = parent,
                     num_tx_cells = deltaCells
                 )
             if deltaCells < 0:
                 # print(f"[e-otf] too many cells to {parent}: have {nowCells}, need {reqCells}, remove {numCellsToRemove}")
+                self.retry_count[parent] = 0
                 self._request_deleting_cells(
                     neighbor     = parent,
                     num_cells    = deltaCells,
