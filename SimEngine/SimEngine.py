@@ -134,6 +134,17 @@ class DiscreteEventEngine(threading.Thread):
                             del self.uniqueTagSchedule[uniqueTag]
                     del self.events[self.asn]
 
+                    # @temp log len(txQueue) of each mote
+                    if self.asn * self.settings.tsch_slotDuration % 10 == 0.0:
+                        for mote in self.motes:
+                            self.log(
+                                SimLog.LOG_TSCH_TXQUEUE_LENGTH,
+                                {
+                                    u'_mote_id': mote.id,
+                                    u'length': len(mote.tsch.txQueue),
+                                }
+                            )
+
                 # call the callbacks (outside the dataLock)
                 for cb in cbs:
                     cb()

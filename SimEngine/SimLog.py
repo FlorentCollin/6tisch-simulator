@@ -91,6 +91,7 @@ LOG_TSCH_RXDONE                   = {u'type': u'tsch.rxdone',               u'ke
 LOG_TSCH_BACKOFF_EXPONENT_UPDATED = {u'type': u'tsch.be.updated',           u'keys': [u'_mote_id',u'old_be', u'new_be']}
 LOG_TSCH_ADD_SLOTFRAME            = {u'type': u'tsch.add_slotframe',        u'keys': [u'_mote_id',u'slotFrameHandle',u'length']}
 LOG_TSCH_DELETE_SLOTFRAME         = {u'type': u'tsch.delete_slotframe',     u'keys': [u'_mote_id',u'slotFrameHandle',u'length']}
+LOG_TSCH_TXQUEUE_LENGTH           = {u'type': u'tsch.tx_queue_length',      u'keys': [u'_mote_id', u'length']}
 
 # === mote info
 LOG_RADIO_STATS                   = {u'type': u'radio.stats',               u'keys': [u'_mote_id', u'idle_listen', u'tx_data_rx_ack', u'tx_data', u'rx_data_tx_ack', u'rx_data', u'sleep']}
