@@ -90,7 +90,7 @@ OTF_THRESHOLD                               = 2   # @incomplete should be moved 
 OTF_HOUSEKEEPING_PERIOD                     = 1.0
 OTF_TRAFFIC_SMOOTHING                       = 0.25 # moving average weight of the new value
 
-EOTF_THRESHOLD                              = 4 
+EOTF_THRESHOLD                              = 2 
 EOTF_HOUSEKEEPING_PERIOD                    = 1.0
 EOTF_TRAFFIC_SMOOTHING                      = 0.25 # moving average weight of the new value
 
