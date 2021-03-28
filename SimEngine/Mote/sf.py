@@ -2235,7 +2235,7 @@ class SchedulingFunctionEOTF(SchedulingFunctionOTF):
 
     def _allocation_housekeeping(self):
         '''
-        OTF algorithm: decides when to add/delete cells.
+        EOTF algorithm: decides when to add/delete cells.
         '''
         with self.mote.dataLock:
             # if node does not have parent, or has not joined or is not sync, do not perform OTF
@@ -2249,17 +2249,18 @@ class SchedulingFunctionEOTF(SchedulingFunctionOTF):
             slotframe = self.mote.tsch.get_slotframe(self.SLOTFRAME_OTF_HANDLE)
             if self.numCellsAvg < 0:
                 self.numCellsAvg = self.numCellsUsed
-                self.queueOccupancyAvg = len(self.mote.tsch.txQueue)
+                self.queueOccupancyAvg = len(self.mote.tsch.txQueue) / self.settings.tsch_tx_queue_size
                 self.cellsUtilizationAvg = self._cellsUtilization()
             else:
                 self.numCellsAvg = (self.numCellsUsed * d.EOTF_TRAFFIC_SMOOTHING
                                    + self.numCellsAvg * (1 - d.EOTF_TRAFFIC_SMOOTHING))
 
-                self.queueOccupancyAvg = (self.queueOccupancyAvg * d.EOTF_TRAFFIC_SMOOTHING
-                                         + len(self.mote.tsch.txQueue) * (1 - d.EOTF_TRAFFIC_SMOOTHING))
+                nowQueueSize = len(self.mote.tsch.txQueue) / self.settings.tsch_tx_queue_size
+                self.queueOccupancyAvg = (nowQueueSize * d.EOTF_TRAFFIC_SMOOTHING
+                                          + self.queueOccupancyAvg * (1 - d.EOTF_TRAFFIC_SMOOTHING))
 
-                self.cellsUtilizationAvg = (self.cellsUtilizationAvg * d.EOTF_TRAFFIC_SMOOTHING
-                                   + self._cellsUtilization() * (1 - d.EOTF_TRAFFIC_SMOOTHING))
+                self.cellsUtilizationAvg = (self._cellsUtilization() * d.EOTF_TRAFFIC_SMOOTHING
+                                            + self.cellsUtilizationAvg * (1 - d.EOTF_TRAFFIC_SMOOTHING))
 
             # reset counters
             self.numCellsUsed = 0
@@ -2274,13 +2275,6 @@ class SchedulingFunctionEOTF(SchedulingFunctionOTF):
             # convert to pkts/cycle
             genTraffic *= self.settings.tsch_slotframeLength * self.settings.tsch_slotDuration
 
-            # @incomplete define constants update settings file
-            threshold = d.EOTF_THRESHOLD
-            congestionBonus = threshold
-            maxQueueSize = self.mote.tsch.txQueueSize
-            beta = 0.2 * maxQueueSize
-            alpha = 0.2 * maxQueueSize
-
             # calculate required number of cells to that parent
             etx = self._estimateETX(parent)
             self.RPL_MAX_ETX = 4.0 # @incomplete: update that in RPL or somewhere else and wtf is this number
@@ -2289,35 +2283,51 @@ class SchedulingFunctionEOTF(SchedulingFunctionOTF):
 
             reqCells = int(math.ceil(genTraffic * etx))
 
+            # @incomplete define constants update settings file
+            threshold = d.EOTF_THRESHOLD
+            congestionBonus = threshold
+            beta = 0.50
+            alpha = 0.50
+
+
             # measure how many cells I have now to that parent
             otf_slotframe = self.mote.tsch.slotframes[self.SLOTFRAME_OTF_HANDLE]
-            nowCells = len(otf_slotframe.get_cells_filtered(parent, [d.CELLOPTION_TX]))
+            nowCells = len(otf_slotframe.get_cells_filtered(parent, self.TX_CELL_OPT))
 
+            deltaCells = 0
             if self.queueOccupancyAvg > beta:
-               deltaCells = congestionBonus
-            if reqCells > nowCells:
+                deltaCells = congestionBonus
+                print("--- ADD CONGESTION BONUS")
+            elif reqCells > nowCells:
                 deltaCells = reqCells - nowCells + math.ceil(threshold / 2)
+                print("--- NORMAL ADD")
             elif reqCells < nowCells - threshold:
                 if self.cellsUtilizationAvg > alpha:
-                    deltaCells = congestionBonus
+                    print("--- DEL CONGESTION BONUS")
+                    deltaCells = -congestionBonus
                 else:
-                    deltaCells = nowCells - reqCells - math.floor(threshold / 2)
-            else:
-                deltaCells = 0
+                    deltaCells = -(nowCells - reqCells - math.floor(threshold / 2))
+                    print("--- NORMAL DEL")
+            if nowCells == 0 and deltaCells == 0:
+                deltaCells = 1
 
+            if deltaCells != 0:
+                print("queueOcc" , self.queueOccupancyAvg)
+                print("numCells" , self.numCellsAvg)
+                print("cellsUtili" , self.cellsUtilizationAvg)
             if deltaCells > 0:
-                # print(f"[e-otf] not enough cells to {parent}: have {nowCells}, need {reqCells}, add {numCellsToAdd}")
+                print(f"[e-otf] {self.mote.get_mac_addr()} not enough cells to {parent}: have {nowCells}, need {reqCells}, add {deltaCells}")
                 self.retry_count[parent] = 0
                 self._request_adding_cells(
                     neighbor     = parent,
                     num_tx_cells = deltaCells
                 )
             if deltaCells < 0:
-                # print(f"[e-otf] too many cells to {parent}: have {nowCells}, need {reqCells}, remove {numCellsToRemove}")
+                print(f"[e-otf] {self.mote.get_mac_addr()} too many cells to {parent}: have {nowCells}, need {reqCells}, remove {deltaCells}")
                 self.retry_count[parent] = 0
                 self._request_deleting_cells(
                     neighbor     = parent,
-                    num_cells    = deltaCells,
+                    num_cells    = -deltaCells,
                     cell_options = self.TX_CELL_OPT
                 )
 

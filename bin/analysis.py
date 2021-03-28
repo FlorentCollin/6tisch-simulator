@@ -176,9 +176,8 @@ def load_stats_from_filepath(filepath):
     with open(filepath) as f:
         return json.load(f)
 
-def load_stats(sf_names: List[str]):
+def load_stats(sf_names: List[str], num_motes):
     log_dir_path = 'simData'
-    num_motes = 7 # @incomplete
     data_files = (f'{log_dir_path}/{sf_name}/exec_numMotes_{num_motes}.dat.kpi' for sf_name in sf_names)
     stats_raw = (load_stats_from_filepath(filepath) for filepath in data_files)
     return [create_stats(x) for x in stats_raw]

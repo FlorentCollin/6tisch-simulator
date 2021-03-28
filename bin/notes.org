@@ -1,10 +1,10 @@
  #+title:Preliminary Analysis of MSF, OTF and E-OTF
 #+author:Florent Collin
-#+date:<2021-03-15 Mon>
+<2021-03-25 Thu>
 
 # -*- org-src-preserve-indentation: t; org-edit-src-content: 0; -*-
-#+OPTIONS: toc:nil
 #+STARTUP: hideblocks
+#+SETUPFILE: https://fniessen.github.io/org-html-themes/org/theme-readtheorg.setup
 * Analysis
 #+BEGIN_SRC elisp :exports none :results none
 (when (get-buffer "*Python*")
@@ -37,12 +37,14 @@
 #+BEGIN_SRC python :session :exports none
 from analysis import *
 import matplotlib.pyplot as plt
-sf_names = ['MSF', 'OTF']
-stats = load_stats(sf_names)
+sf_names = ['MSF', 'OTF', 'EOTF']
+stats = load_stats(sf_names, 7)
 #+END_SRC
 #+RESULTS: imports
 
 ** Number of 6P transactions completed by SF
+#+RESULTS:
+
 #+BEGIN_SRC python :session :exports results :results file
 plt.figure()
 barplot_sixp_transactions(stats)
@@ -149,13 +151,10 @@ filename
 
 * Prochaines étapes
 - Regarder pour les interférences radios
-- Des paquets peuvent être perdus à la fin de la simulation et fausser le Upstream Delivery Ratio 
-    -> Solution: arrêter la simulation plus tôt
 - Faire deux phases de mesures et mesurer les indicateurs dans les 2 phases
   1. Phase de convergence
   2. Phase stable (quand le réseau à converger)
 - Topologie en arbre intéressante pour étudier les SFs avec aggrégation du traffic
-- Le comportement de MSF est étrange (ajout de plusieurs cellules simultannément)
+- Pour l'instant je ne vois pas de SIXP_TIMEOUT, il existe mais n'est pas utilisé
   
-Pour l'instant j'ai le temps en secondes pour arrêter l'envoie de paquets
-Je veux ce temps en ASN un tsch_slotDuration * tsch_slotLength
+
