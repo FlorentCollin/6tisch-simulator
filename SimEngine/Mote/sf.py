@@ -314,9 +314,10 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
             )
             if len(cells) >= 1:
                 self.mote.sixp.send_request(
-                    dstMac   = old_parent,
-                    command  = d.SIXP_CMD_CLEAR,
-                    callback = _callback
+                    dstMac          = old_parent,
+                    command         = d.SIXP_CMD_CLEAR,
+                    callback        = _callback,
+                    timeout_seconds = self.settings.sixp_transaction_timeout
                 )
             else:
                 # do nothing
@@ -880,7 +881,8 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
             cellOptions = cell_options,
             numCells    = num_cells,
             cellList    = cell_list,
-            callback    = callback
+            callback    = callback,
+            timeout_seconds = self.settings.sixp_transaction_timeout
         )
 
     def _receive_add_request(self, request):
@@ -1043,12 +1045,13 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
         self.retry_count[neighbor] = 0
         # send a DELETE request
         self.mote.sixp.send_request(
-            dstMac      = neighbor,
-            command     = d.SIXP_CMD_DELETE,
-            cellOptions = cell_options,
-            numCells    = num_cells,
-            cellList    = cell_list,
-            callback    = callback
+            dstMac          = neighbor,
+            command         = d.SIXP_CMD_DELETE,
+            cellOptions     = cell_options,
+            numCells        = num_cells,
+            cellList        = cell_list,
+            callback        = callback,
+            timeout_seconds = self.settings.sixp_transaction_timeout
         )
 
     def _receive_delete_request(self, request):
@@ -1244,7 +1247,8 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
             numCells           = num_cells,
             relocationCellList = relocation_cell_list,
             candidateCellList  = candidate_cell_list,
-            callback           = callback
+            callback           = callback,
+            timeout_seconds    = self.settings.sixp_transaction_timeout
         )
 
     def _receive_relocate_request(self, request):
@@ -1427,9 +1431,10 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
     def detect_schedule_inconsistency(self, peerMac):
         # send a CLEAR request to the peer
         self.mote.sixp.send_request(
-            dstMac   = peerMac,
-            command  = d.SIXP_CMD_CLEAR,
-            callback = lambda event, packet: self._clear_cells(peerMac)
+            dstMac          = peerMac,
+            command         = d.SIXP_CMD_CLEAR,
+            callback        = lambda event, packet: self._clear_cells(peerMac),
+            timeout_seconds = self.settings.sixp_transaction_timeout
         )
 
     def recv_request(self, packet):
@@ -1769,12 +1774,13 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
 
         # send a request
         self.mote.sixp.send_request(
-            dstMac      = neighbor,
-            command     = d.SIXP_CMD_ADD,
-            cellOptions = cell_options,
-            numCells    = num_cells,
-            cellList    = cell_list,
-            callback    = callback
+            dstMac          = neighbor,
+            command         = d.SIXP_CMD_ADD,
+            cellOptions     = cell_options,
+            numCells        = num_cells,
+            cellList        = cell_list,
+            callback        = callback,
+            timeout_seconds = self.settings.sixp_transaction_timeout
         )
 
     def _receive_add_request(self, request):
@@ -1924,6 +1930,7 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
             #cell_list_len = self.DEFAULT_CELL_LIST_LEN
             cell_list_len = num_cells
         )
+        assert num_cells > 0
         assert len(cell_list) > 0
 
         # prepare callback
@@ -1935,12 +1942,13 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
 
         # send a DELETE request
         self.mote.sixp.send_request(
-            dstMac      = neighbor,
-            command     = d.SIXP_CMD_DELETE,
-            cellOptions = cell_options,
-            numCells    = num_cells,
-            cellList    = cell_list,
-            callback    = callback
+            dstMac          = neighbor,
+            command         = d.SIXP_CMD_DELETE,
+            cellOptions     = cell_options,
+            numCells        = num_cells,
+            cellList        = cell_list,
+            callback        = callback,
+            timeout_seconds = self.settings.sixp_transaction_timeout
         )
 
     def _receive_delete_request(self, request):
@@ -1982,7 +1990,6 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
                         cell_options = our_cell_options
                 )
         else:
-            breakpoint()
             code      = d.SIXP_RC_ERR
             cell_list = None
             callback  = None
@@ -2137,7 +2144,8 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
             numCells           = num_cells,
             relocationCellList = relocation_cell_list,
             candidateCellList  = candidate_cell_list,
-            callback           = callback
+            callback           = callback,
+            timeout_seconds    = self.settings.sixp_transaction_timeout
         )
 
     def _receive_relocate_request(self, request):
@@ -2286,8 +2294,8 @@ class SchedulingFunctionEOTF(SchedulingFunctionOTF):
             # @incomplete define constants update settings file
             threshold = d.EOTF_THRESHOLD
             congestionBonus = threshold
-            beta = 0.50
-            alpha = 0.50
+            beta = 0.80
+            alpha = 0.20
 
 
             # measure how many cells I have now to that parent
@@ -2297,33 +2305,36 @@ class SchedulingFunctionEOTF(SchedulingFunctionOTF):
             deltaCells = 0
             if self.queueOccupancyAvg > beta:
                 deltaCells = congestionBonus
-                print("--- ADD CONGESTION BONUS")
+                # print("--- ADD CONGESTION BONUS")
             elif reqCells > nowCells:
                 deltaCells = reqCells - nowCells + math.ceil(threshold / 2)
-                print("--- NORMAL ADD")
+                # print("--- NORMAL ADD")
             elif reqCells < nowCells - threshold:
                 if self.cellsUtilizationAvg > alpha:
-                    print("--- DEL CONGESTION BONUS")
+                    # print("--- DEL CONGESTION BONUS")
                     deltaCells = -congestionBonus
                 else:
                     deltaCells = -(nowCells - reqCells - math.floor(threshold / 2))
-                    print("--- NORMAL DEL")
+                    # print("--- NORMAL DEL")
             if nowCells == 0 and deltaCells == 0:
                 deltaCells = 1
 
+            deltaCells = int(deltaCells) # @incomplete fix weird behavior in python2.7
+
             if deltaCells != 0:
-                print("queueOcc" , self.queueOccupancyAvg)
-                print("numCells" , self.numCellsAvg)
-                print("cellsUtili" , self.cellsUtilizationAvg)
+                pass
+                # print("queueOcc" , self.queueOccupancyAvg)
+                # print("numCells" , self.numCellsAvg)
+                # print("cellsUtili" , self.cellsUtilizationAvg)
             if deltaCells > 0:
-                print(f"[e-otf] {self.mote.get_mac_addr()} not enough cells to {parent}: have {nowCells}, need {reqCells}, add {deltaCells}")
+                # print(f"[e-otf] {self.mote.get_mac_addr()} not enough cells to {parent}: have {nowCells}, need {reqCells}, add {deltaCells}")
                 self.retry_count[parent] = 0
                 self._request_adding_cells(
                     neighbor     = parent,
                     num_tx_cells = deltaCells
                 )
             if deltaCells < 0:
-                print(f"[e-otf] {self.mote.get_mac_addr()} too many cells to {parent}: have {nowCells}, need {reqCells}, remove {deltaCells}")
+                # print(f"[e-otf] {self.mote.get_mac_addr()} too many cells to {parent}: have {nowCells}, need {reqCells}, remove {deltaCells}")
                 self.retry_count[parent] = 0
                 self._request_deleting_cells(
                     neighbor     = parent,

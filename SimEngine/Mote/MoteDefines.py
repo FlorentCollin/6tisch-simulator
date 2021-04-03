@@ -86,13 +86,13 @@ MSF_HOUSEKEEPINGCOLLISION_PERIOD            = 60   # in seconds
 MSF_RELOCATE_PDRTHRES                       = 0.5  # in [0-1]
 MSF_MIN_NUM_TX                              = 100  # min number for PDR to be significant
 
-OTF_THRESHOLD                               = 2   # @incomplete should be moved to settings
+OTF_THRESHOLD                               = 4   # @incomplete should be moved to settings
 OTF_HOUSEKEEPING_PERIOD                     = 1.0
-OTF_TRAFFIC_SMOOTHING                       = 0.25 # moving average weight of the new value
+OTF_TRAFFIC_SMOOTHING                       = 0.4 # moving average weight of the new value
 
-EOTF_THRESHOLD                              = 2 
+EOTF_THRESHOLD                              = 4 
 EOTF_HOUSEKEEPING_PERIOD                    = 1.0
-EOTF_TRAFFIC_SMOOTHING                      = 0.25 # moving average weight of the new value
+EOTF_TRAFFIC_SMOOTHING                      = 0.4 # moving average weight of the new value
 
 # === tsch
 TSCH_MIN_BACKOFF_EXPONENT                   = 1
