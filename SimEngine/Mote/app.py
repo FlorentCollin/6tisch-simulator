@@ -195,7 +195,8 @@ class AppPeriodic(AppBase):
     def _schedule_transmission(self):
         assert self.settings.app_pkPeriod >= 0
         curr_time = self.engine.getAsn() * self.settings.tsch_slotDuration
-        if self.settings.app_pkPeriod == 0 or curr_time > self.settings.app_stopSending:
+        stop_sending = self.settings.app_stopSending
+        if self.settings.app_pkPeriod == 0 or curr_time > stop_sending:
             return
 
         if self.sending_first_packet:
