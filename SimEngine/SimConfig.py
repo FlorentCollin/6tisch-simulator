@@ -166,12 +166,10 @@ class SimConfig(dict):
             )
             if os.path.exists(log_directory_path):
                 shutil.rmtree(log_directory_path)
-            log_directory_name = sf_class
+            log_directory_name = log_directory_path
         else:
-            raise NotImplementedError(
-                u'log_directory_name "{0}" is not supported'.format(
-                    self.log_directory_name
-                )
-            )
+            if os.path.exists(self.log_directory_name):
+                shutil.rmtree(self.log_directory_name)
+            log_directory_name = self.log_directory_name
 
         SimConfig._log_directory_name = log_directory_name
