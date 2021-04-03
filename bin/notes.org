@@ -1,16 +1,16 @@
- #+title:Preliminary Analysis of MSF, OTF and E-OTF
+#+title:Preliminary Analysis of MSF, OTF and E-OTF
 #+author:Florent Collin
-<2021-03-25 Thu>
 
-# -*- org-src-preserve-indentation: t; org-edit-src-content: 0; -*-
-#+STARTUP: hideblocks
+#+STARTUP: hideblocks inlineimages
 #+SETUPFILE: https://fniessen.github.io/org-html-themes/org/theme-readtheorg.setup
+
 * Analysis
 #+BEGIN_SRC elisp :exports none :results none
+;; Basically reset the :session
 (when (get-buffer "*Python*")
-  (kill-buffer "*Python*"))
+(let ((kill-buffer-query-functions nil))
+        (kill-buffer "*Python*")))
 #+END_SRC
-
 ** Parameters
 |------------------------------------+-------|
 | *Simulation settings and parameters* | *Value* |
@@ -37,124 +37,279 @@
 #+BEGIN_SRC python :session :exports none
 from analysis import *
 import matplotlib.pyplot as plt
+import matplotlib as mpl
+# mpl.rcParams['figure.dpi'] = 200
+
 sf_names = ['MSF', 'OTF', 'EOTF']
-stats = load_stats(sf_names, 7)
+data_dir = '/mnt/ramdisk/simData'
+stats = load_stats(sf_names, data_dir, 7)
+
+def save(filename):
+    plt.savefig(filename)
+    plt.close()
 #+END_SRC
 #+RESULTS: imports
 
 ** Number of 6P transactions completed by SF
-#+RESULTS:
-
 #+BEGIN_SRC python :session :exports results :results file
-plt.figure()
-barplot_sixp_transactions(stats)
+def count_sixp_transactions(motes_stats: Dict):
+    count = 0
+    for mote, mote_stats in motes_stats.items():
+        if mote == 0:
+            continue
+        sixp_transactions = mote_stats['sixp_transactions_count']
+        count += sixp_transactions[-1] if len(sixp_transactions) else 0
+    return count
 
-filename = 'simData/barplot_sixp_transactions.png'
-plt.savefig(filename);
+plt.figure()
+data = pd.DataFrame({s.sf_name: mote_extracter(s, count_sixp_transactions) for s in stats})
+ax = sns.boxplot(data=data)
+ax.set_title('Number of 6P transactions completed by SF')
+ax.set_ylabel('#6P Transactions')
+
+filename = 'simData/boxplot_sixp_transactions.png'
+save(filename);
 filename
 #+END_SRC
 
 #+RESULTS:
-[[file:simData/barplot_sixp_transactions.png]]
+[[file:simData/boxplot_sixp_transactions.png]]
 
 ** Cumulative number of 6P transactions
 #+BEGIN_SRC python :session :exports results :results file
 plt.figure()
-plot_sixp_transactions(stats, 1)
+def extract_sixp_transactions(stats: Stats, run_id, mote_id):
+    mote_stats = stats.motes_stats[run_id][mote_id]
+    return pd.DataFrame({
+        'times': mote_stats['sixp_transactions_times'],
+        'transactions_cumm': mote_stats['sixp_transactions_count']
+    })
+
+run_id = 0
+mote_id = 1
+it = ((s.sf_name, extract_sixp_transactions(s, run_id, mote_id)) for s in stats)
+dfs = [df.assign(SF=sf_name) for sf_name, df in it]
+data = pd.concat(dfs)
+ax = sns.lineplot(data=data, x='times', y='transactions_cumm', hue='SF')
+ax.set_title(f'Cummulative 6P transactions count for mote {mote_id} in run {run_id}')
+ax.set_ylabel("#6P Transactions")
+ax.set_xlabel("Time(s)")
 
 filename = 'simData/plot_sixp_transactions.png'
-plt.savefig(filename);
+save(filename);
 filename
 #+END_SRC
+
 #+RESULTS:
 [[file:simData/plot_sixp_transactions.png]]
 
 ** Maximum number of scheduled cells by SF
 #+BEGIN_SRC python :session :exports results :results file
-plt.figure()
-barplot_max_scheduled_cells(stats)
+def max_scheduled_cells(motes_stats: Dict):
+    count = 0
+    for mote, mote_stats in motes_stats.items():
+        if mote == 0:
+            continue
+        scheduled_cells = mote_stats['scheduled_cells_count']
+        count += max(scheduled_cells) if len(scheduled_cells) else 0
+    return count
 
-filename = 'simData/barplot_max_scheduled_cells.png'
-plt.savefig(filename);
+plt.figure()
+data = pd.DataFrame({s.sf_name: mote_extracter(s, max_scheduled_cells) for s in stats})
+ax = sns.boxplot(data=data)
+ax.set_title('Maximum number of scheduled cells by SF')
+ax.set_ylabel('#Scheduled Cells')
+ax.axhline(y=72, linestyle='dashed', label="Min required cells")
+
+filename = 'simData/boxplot_max_scheduled_cells.png'
+save(filename);
 filename
 #+END_SRC
 
 #+RESULTS:
-[[file:simData/barplot_max_scheduled_cells.png]]
+[[file:simData/boxplot_max_scheduled_cells.png]]
 
 ** Number of scheduled cells by mote and SF
 #+BEGIN_SRC python :session :exports results :results file
-plt.figure(figsize=(10, 5))
-plot_scheduled_cells_mote(stats, 1)
+plt.figure()
+def extract_scheduled_cells(stats: Stats, run_id, mote_id):
+    mote_stats = stats.motes_stats[run_id][mote_id]
+    return pd.DataFrame({
+        'times': mote_stats['scheduled_cells_times'],
+        'scheduled_cells': mote_stats['scheduled_cells_count']
+    })
 
-filename = 'simData/plot_scheduled_cells_mote1.png'
-plt.savefig(filename);
+run_id = 1
+motes_ids = list(range(1, 7))
+minimum_required_cells = [22, 18, 14, 10, 6, 2]
+fig, axes = plt.subplots(len(motes_ids), 1, figsize=(10, 6*len(motes_ids)), sharex=True, sharey=True)
+fig.suptitle(f"Scheduled Cells by SF and Mote in run {run_id}")
+
+for i, mote_id in enumerate(motes_ids):
+    it = ((sf_stats.sf_name, extract_scheduled_cells(sf_stats, run_id, mote_id)) for sf_stats in stats)
+    dfs = [df.assign(SF=sf_name) for sf_name, df in it]
+    data = pd.concat(dfs)
+
+    ax = axes[i]
+    sns.scatterplot(ax=ax, data=data, x='times', y='scheduled_cells', hue='SF')
+    ax.xaxis.set_tick_params(which='both', labelbottom=True)
+    ax.axhline(y=minimum_required_cells[i], linestyle='dashed', label="Min required cells")
+    ax.set_xlabel('Time(s)')
+    ax.set_ylabel('#Scheduled Cells')
+    ax.legend(loc='upper left')
+    ax.set_title(f'Mote {mote_id}')
+
+filename = 'simData/plot_scheduled_cells_mote.png'
+save(filename)
 filename
 #+END_SRC
 
 #+RESULTS:
-[[file:simData/plot_scheduled_cells_mote1.png]]
+[[file:simData/plot_scheduled_cells_mote.png]]
 
-** Length of TX queue by mote and SF
-#+header: :eval yes
+** COMMENT Length of TX queue by mote and SF
 #+BEGIN_SRC python :session :exports results :results file
 plt.figure(figsize=(10, 5))
 #plot_tx_queue_mote((s for s in stats if s.sf_name in ('MSF', 'EOTF')), 1)
 plot_tx_queue_mote(stats, 1)
 
 filename = 'simData/plot_tx_queue_mote1.png'
-plt.savefig(filename);
+save(filename);
 filename
 #+END_SRC
 
 #+RESULTS:
-[[file:simData/plot_tx_queue_mote1.png]]
+[[file:]]
 
 ** E2E Upstream Delivery Ratio
 #+BEGIN_SRC python :session :exports results :results file
 plt.figure()
-barplot_e2e_pdr(stats)
+def extracter(global_stats):
+    return global_stats['e2e-upstream-delivery'][0]['value'] * 100
 
-filename = 'simData/barplot_e2e_pdr.png'
-plt.savefig(filename);
+data = pd.DataFrame({s.sf_name: global_extracter(s, extracter) for s in stats})
+ax = sns.boxplot(data=data)
+ax.set_title("E2E Upstream Delivery Ratio")
+ax.set_ylabel("%")
+
+filename = 'simData/boxplot_upstream_delivery_ratio.png'
+save(filename);
 filename
 #+END_SRC
 
 #+RESULTS:
-[[file:simData/barplot_e2e_pdr.png]]
+[[file:simData/boxplot_upstream_delivery_ratio.png]]
+
+** COMMENT Reasons for packets dropped
+#+BEGIN_SRC python :session :exports results :results file
+plt.figure()
+def extract_packet_dropped_reasons(stats, run_id):
+    motes_reasons = [mote_stats['packet_dropped_reasons'] for mote_stats in stats.motes_stats[run_id].values()]
+    return [reason for mote_reason in motes_reasons for reason in mote_reason]
+
+# run_id = 0
+# data = pd.DataFrame({s.sf_name: extract_packet_dropped_reasons(s, run_id) for s in stats[0:1]})
+# ax = sns.countplot(data=data)
+
+# filename = 'simData/countplot_packets_dropped_reasons.png'
+# save(filename);
+# filename
+#+END_SRC
+
+#+RESULTS:
+[[file:]]
 
 ** E2E Upstream Latency
 #+BEGIN_SRC python :session :exports results :results file
 plt.figure()
-barplot_e2e_latency(stats)
+def extracter(global_stats):
+    return global_stats['e2e-upstream-latency'][0]['mean']
 
-filename = 'simData/barplot_e2e_latency.png'
-plt.savefig(filename);
+data = pd.DataFrame({s.sf_name: global_extracter(s, extracter) for s in stats})
+ax = sns.boxplot(data=data, orient='h')
+ax.set_title("E2E Upstream Latency")
+ax.set_xlabel("Time(s)")
+
+filename = 'simData/boxplot_upstream_latency.png'
+save(filename);
 filename
 #+END_SRC
 
 #+RESULTS:
-[[file:simData/barplot_e2e_latency.png]]
+[[file:simData/boxplot_upstream_latency.png]]
 
 **  Max Joining Time
 #+BEGIN_SRC python :session :exports results :results file
 plt.figure()
-barplot_joining_time(stats)
+def extracter(global_stats):
+    return global_stats['joining-time'][1]['max'] / 60
 
-filename = 'simData/barplot_joining_time.png'
-plt.savefig(filename);
+data = pd.DataFrame({s.sf_name: global_extracter(s, extracter) for s in stats})
+ax = sns.boxplot(data=data, orient='h')
+ax.set_title('Maximum Joining Time (s)')
+ax.set_xlabel('Time(m)')
+filename = 'simData/boxplot_joining_time.png'
+save(filename);
 filename
 #+END_SRC
 
 #+RESULTS:
-[[file:simData/barplot_joining_time.png]]
+[[file:simData/boxplot_joining_time.png]]
 
+** COMMENT Current Consumed
+#+begin_src python :session :results output :exports results
+for sf_stats in stats:
+    current_consumed = round(sf_stats.global_stats['current-consumed'][0]['mean'])
+    print(f"{sf_stats.sf_name}, {current_consumed}")
+#+end_src
+
+#+RESULTS:
+
+** COMMENT Topology
+#+begin_src python :session :exports results :results file
+from graphviz import Digraph
+
+dot = Digraph(comment='Topology', format='png')
+# @incomplete msf might not be the first stats
+msf_stats = stats[0]
+for id, mote_stats in msf_stats.motes_stats.items():
+    dot.node(str(id))
+
+for id, mote_stats in msf_stats.motes_stats.items():
+    if not 'churns' in mote_stats:
+        continue
+    churns = mote_stats['churns']
+    if not churns:
+        continue
+    last_parent = churns[-1]
+    parent_id = msf_stats.addr_mote[last_parent] 
+    dot.edge(str(id), str(parent_id))
+
+filename = 'simData/topology'
+filename_with_extension = filename + ".png"
+dot.render(filename)
+filename_with_extension
+#+end_src
+
+#+RESULTS:
+[[file:]]
+
+* Backlog
+- Fix EOTF
+- Fix =sixp_transaction_failure= that generate a massive amount of sixp_transactions
+- Add =sixp_transaction_timeout=
+- Graph for all three SFs
 * Prochaines étapes
 - Regarder pour les interférences radios
 - Faire deux phases de mesures et mesurer les indicateurs dans les 2 phases
   1. Phase de convergence
   2. Phase stable (quand le réseau à converger)
 - Topologie en arbre intéressante pour étudier les SFs avec aggrégation du traffic
-- Pour l'instant je ne vois pas de SIXP_TIMEOUT, il existe mais n'est pas utilisé
-  
-
+- Visualisation de la topologie et ajout du nombre de sixp_transactions ou autre info par dessus
+- Visualisation des paquets perdus
+- Trouver les meilleurs paramètres pour chaque SF
+- Dans le rapport, expliquer la manière de procéder pour les expériences ainsi que l'analyse des résultats
+- Ensuite, analyser les 3 SFs ensemble selon plusieurs critères (pas encore totalement défini) d'abord sur la topologie linéaire
+- Overprovisionning
+- Boîtes à moustache <- c'est là dessus qu'on se concentre maintenant
+- On doit se focus sur deux choses: le Upstream Delivery Ratio à split et les boîtes à moustaches

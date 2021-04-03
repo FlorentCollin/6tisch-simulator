@@ -10,20 +10,27 @@ sns.set_theme(style="whitegrid")
 @dataclass
 class Stats:
     sf_name: str
-    motes_stats: Dict
-    global_stats: Dict
+    motes_stats: [Dict]
+    # mote_addr: Dict
+    # addr_mote: Dict
+    global_stats: List[Dict]
 
 def create_stats(stats_raw):
-    motes_stats = {int(k): v for k, v in stats_raw['0'].items() if k.isdigit()}
-    global_stats_key = 'global-stats'
-    base_run_id = '0'
-    global_stats = stats_raw['0'][global_stats_key]
-    for run_id, run_stats in stats_raw.items():
-        if run_id == base_run_id:
-            continue
-        mean_dicts(global_stats, run_stats[global_stats_key])
-    sf_name = global_stats['sf_class']
+    motes_stats = [{int(k): v for k, v in stats.items() if k.isdigit() and k != '0'} for stats in stats_raw.values()]
+    # @incomplete the addr might not have been attribued yet
+    # mote_addr = {id: stats['mac_addr'] for id, stats in motes_stats.items()}
+    # addr_mote = {v: k for k, v in mote_addr.items()}
+
+    global_stats = [stats['global-stats'] for stats in stats_raw.values()]
+    sf_name = global_stats[0]['sf_class']
+    #return Stats(sf_name, motes_stats, mote_addr, addr_mote, global_stats)
     return Stats(sf_name, motes_stats, global_stats)
+
+def global_extracter(stats: Stats, extracter_fn):
+    return [extracter_fn(x) for x in stats.global_stats]
+
+def mote_extracter(stats: Stats, extracter_fn):
+    return [extracter_fn(x) for x in stats.motes_stats]
 
 def mean_dicts(d1, d2):
     def helper(k, v, d2):
@@ -46,6 +53,8 @@ def mean_dicts(d1, d2):
 def count_sixp_transactions(stats: Stats):
     count = 0
     for mote, mote_stats in stats.motes_stats.items():
+        if mote == 0:
+            continue
         sixp_transactions = mote_stats['sixp_transactions_count']
         count += sixp_transactions[-1] if len(sixp_transactions) else 0
     return count
@@ -81,6 +90,8 @@ def plot_sixp_transactions(stats_array: List[Stats], mote_id: int):
 def extract_max_scheduled_cells(stats: Stats):
     count = 0
     for mote, mote_stats in stats.motes_stats.items():
+        if mote == 0:
+            continue
         scheduled_cells = mote_stats['scheduled_cells_count']
         count += max(scheduled_cells) if len(scheduled_cells) else 0
     return count
@@ -107,11 +118,16 @@ def extract_scheduled_cells_mote(stats: Stats, mote_id: int):
         'scheduled_cells': scheduled_cells_count,
     })
 
-def plot_scheduled_cells_mote(stats_array: List[Stats], mote_id: int):
+def plot_scheduled_cells_mote(stats_array: List[Stats], mote_id: int, minimum_required_cells: int):
     it = ((stats.sf_name, extract_scheduled_cells_mote(stats, mote_id)) for stats in stats_array)
     dfs = [df.assign(SF=sf_name) for sf_name, df in it]
     data = pd.concat(dfs)
     ax = sns.scatterplot(data=data, x='times', y='scheduled_cells', hue='SF')
+    ax.axhline(y=minimum_required_cells, linestyle='dashed')
+    # handles, _ = ax.get_legend_handles_labels()
+    # print(handles)
+    ax.legend()
+    ax.text(0, minimum_required_cells+1, "Minimum required cells", c='b')
     ax.set_title(f'Scheduled Cells by SF on Mote {mote_id}')
     return ax
 
@@ -170,25 +186,42 @@ def barplot_joining_time(stats_array: List[Stats]):
     for i in range(len(joining_time)):
         ax.annotate(f'{round(joining_time[i], 2)} m', xy=(joining_time[i], i), verticalalignment='center')
     return ax
-    
+
+def barplot_current_consumed(stats_array: List[Stats]):
+    sf_names = [stats.sf_name for stats in stats_array]
+    current_consumed = [round(stats.global_stats['current-consumed'][0]['mean']) for stats in stats_array]
+    x_name = "SF"
+    y_name = "Current Consumed (mean)"
+    data = {
+        x_name: sf_names,
+        y_name: current_consumed,
+    }
+    ax = sns.barplot(x=x_name, y=y_name, data=data)
+    ax.set_title('Current Consumed (mean)')
+    for i in range(len(current_consumed)):
+        ax.annotate(f'{round(current_consumed[i], 2)} m', xy=(current_consumed[i], i), verticalalignment='center')
+    return ax
 
 def load_stats_from_filepath(filepath):
     with open(filepath) as f:
         return json.load(f)
 
-def load_stats(sf_names: List[str], num_motes):
-    log_dir_path = 'simData'
-    data_files = (f'{log_dir_path}/{sf_name}/exec_numMotes_{num_motes}.dat.kpi' for sf_name in sf_names)
+def load_stats(sf_names: List[str], data_dir, num_motes):
+    data_files = (f'{data_dir}/{sf_name}/exec_numMotes_{num_motes}.dat.kpi' for sf_name in sf_names)
     stats_raw = (load_stats_from_filepath(filepath) for filepath in data_files)
     return [create_stats(x) for x in stats_raw]
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
-    sf_names = ["MSF", "OTF"]
-    stats = load_stats(sf_names)
-    # barplot_e2e_latency(stats)
-    # plt.show()
+    sf_names = ["MSF", "OTF", "EOTF"]
+    stats = load_stats(sf_names, '/mnt/ramdisk/simData', 3)
+    breakpoint()
+    # plt.figure()
+    # def extracter(global_stats):
+    #     return global_stats['e2e-upstream-latency'][0]['mean']
 
-    plt.figure()
-    plot_scheduled_cells_mote(stats, 1)
-    plt.show()
+    # data = pd.DataFrame({s.sf_name: global_extracter(s, extracter) for s in stats})
+    # ax = sns.boxplot(data=data, orient='h')
+    # ax.set_title("E2E Upstream Latency")
+    # ax.set_xlabel("Time(s)")
+    # plt.show()
