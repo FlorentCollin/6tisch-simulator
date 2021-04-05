@@ -17,6 +17,7 @@ if __name__ == '__main__':
 import json
 import glob
 import numpy as np
+import argh
 
 from SimEngine import SimLog
 import SimEngine.Mote.MoteDefines as d
@@ -25,13 +26,14 @@ import SimEngine.Mote.MoteDefines as d
 
 DAGROOT_ID = 0  # we assume first mote is DAGRoot
 DAGROOT_IP = 'fd00::1:0'
+BATTERY_AA_CAPACITY_mAh = 2821.5
 
 # =========================== decorators ======================================
 
 def openfile(func):
-    def inner(inputfile):
+    def inner(inputfile, *args, **kwargs):
         with open(inputfile, 'r') as f:
-            return func(f)
+            return func(f, *args, **kwargs)
     return inner
 
 # =========================== helpers =========================================
@@ -41,6 +43,7 @@ def mean(numbers):
 
 def init_mote():
     return {
+        'mac_addr': None,
         'upstream_num_tx': 0,
         'upstream_num_rx': 0,
         'upstream_num_lost': 0,
@@ -48,21 +51,33 @@ def init_mote():
         'join_time_s': None,
         'sync_asn': None,
         'sync_time_s': None,
+        'charge_asn': None,
         'upstream_pkts': {},
         'latencies': [],
         'tx_queue_times': [],
         'tx_queue_length': [],
+        'scheduled_cells': 0,
         'scheduled_cells_times': [],
         'scheduled_cells_count': [],
         'sixp_transactions_times': [],
         'sixp_transactions_count': [],
+        'packet_dropped_reasons': [],
         'hops': [],
+        'churns': [],
+        'charge': None,
+        'lifetime_AA_years': None,
+        'avg_current_uA': None
+    }
+
+def init_dag_mote():
+    return {
+        'mac_addr': None
     }
 
 # =========================== KPIs ============================================
 
 @openfile
-def kpis_all(inputfile):
+def kpis_all(inputfile, start_asn=0, end_asn=sys.maxsize):
 
     allstats = {} # indexed by run_id, mote_id
 
@@ -83,14 +98,12 @@ def kpis_all(inputfile):
         # populate
         if run_id not in allstats:
             allstats[run_id] = {}
-        if (
-                ('_mote_id' in logline)
-                and
-                (mote_id not in allstats[run_id])
-                and
-                (mote_id != DAGROOT_ID)
-            ):
-            allstats[run_id][mote_id] = init_mote()
+
+        if ('_mote_id' in logline and mote_id not in allstats[run_id]):
+            if mote_id == DAGROOT_ID:
+                allstats[run_id][mote_id] = init_dag_mote()
+            else:
+                allstats[run_id][mote_id] = init_mote()
 
         if   logline['_type'] == SimLog.LOG_TSCH_SYNCED['type']:
             # sync'ed
@@ -104,6 +117,9 @@ def kpis_all(inputfile):
 
             allstats[run_id][mote_id]['sync_asn']  = asn
             allstats[run_id][mote_id]['sync_time_s'] = asn*file_settings['tsch_slotDuration']
+
+        elif logline['_type'] == SimLog.LOG_MAC_ADD_ADDR['type']:
+            allstats[run_id][mote_id]['mac_addr'] = logline['addr']
 
         elif logline['_type'] == SimLog.LOG_SECJOIN_JOINED['type']:
             # joined
@@ -120,7 +136,23 @@ def kpis_all(inputfile):
             allstats[run_id][mote_id]['join_asn']  = asn
             allstats[run_id][mote_id]['join_time_s'] = asn*file_settings['tsch_slotDuration']
 
-        elif logline['_type'] == SimLog.LOG_APP_TX['type']:
+        # keep track of the number of scheduled cells even if we are not in the interval
+        # [start_asn, end_asn]. This line of log might still be computed after.
+        elif (logline['_type'] == SimLog.LOG_TSCH_ADD_CELL['type'] and logline['slotFrameHandle'] == 2
+              and mote_id != DAGROOT_ID):
+            allstats[run_id][mote_id]['scheduled_cells'] += 1
+
+        elif (logline['_type'] == SimLog.LOG_TSCH_DELETE_CELL['type'] and logline['slotFrameHandle'] == 2
+              and mote_id != DAGROOT_ID):
+            allstats[run_id][mote_id]['scheduled_cells'] -= 1
+
+        # ASN SPECIFIC LOGS
+        if asn < start_asn:
+            continue
+        if asn > end_asn:
+            continue
+
+        if logline['_type'] == SimLog.LOG_APP_TX['type']:
             # packet transmission
 
             # shorthands
@@ -154,21 +186,39 @@ def kpis_all(inputfile):
             if dstIp != DAGROOT_IP:
                 continue
 
-            allstats[run_id][mote_id]['upstream_pkts'][appcounter]['hops']   = (
-                d.IPV6_DEFAULT_HOP_LIMIT - hop_limit + 1
-            )
-            allstats[run_id][mote_id]['upstream_pkts'][appcounter]['rx_asn'] = asn
+            upstream_pkts = allstats[run_id][mote_id]['upstream_pkts']
+            if appcounter in upstream_pkts:
+                upstream_pkts[appcounter]['hops'] = (d.IPV6_DEFAULT_HOP_LIMIT - hop_limit + 1)
+                upstream_pkts[appcounter]['rx_asn'] = asn
+
+        elif logline['_type'] == SimLog.LOG_RADIO_STATS['type']:
+            # shorthands
+            mote_id    = logline['_mote_id']
+
+            # only log non-dagRoot charge
+            if mote_id == DAGROOT_ID:
+                continue
+
+            charge =  logline['idle_listen'] * d.CHARGE_IdleListen_uC
+            charge += logline['tx_data_rx_ack'] * d.CHARGE_TxDataRxAck_uC
+            charge += logline['rx_data_tx_ack'] * d.CHARGE_RxDataTxAck_uC
+            charge += logline['tx_data'] * d.CHARGE_TxData_uC
+            charge += logline['rx_data'] * d.CHARGE_RxData_uC
+            charge += logline['sleep'] * d.CHARGE_Sleep_uC
+
+            allstats[run_id][mote_id]['charge_asn'] = asn
+            allstats[run_id][mote_id]['charge']     = charge
 
         elif (logline['_type'] in (SimLog.LOG_TSCH_ADD_CELL['type'], SimLog.LOG_TSCH_DELETE_CELL['type'])
               and logline['slotFrameHandle'] == 2
               and mote_id != DAGROOT_ID):
             scheduled_cells_times = allstats[run_id][mote_id]['scheduled_cells_times']
             scheduled_cells_count = allstats[run_id][mote_id]['scheduled_cells_count']
-            delta = 1 if logline['_type'] == SimLog.LOG_TSCH_ADD_CELL['type'] else -1
-            count_transactions = delta if len(scheduled_cells_count) == 0 else scheduled_cells_count[-1] + delta
+            scheduled_cells = allstats[run_id][mote_id]['scheduled_cells']
+
             time_s = asn * file_settings['tsch_slotDuration']
             scheduled_cells_times.append(time_s)
-            scheduled_cells_count.append(count_transactions)
+            scheduled_cells_count.append(scheduled_cells)
 
         elif logline['_type'] == SimLog.LOG_SIXP_TRANSACTION_COMPLETED['type'] and mote_id != DAGROOT_ID:
             sixp_transactions_times = allstats[run_id][mote_id]['sixp_transactions_times']
@@ -185,21 +235,33 @@ def kpis_all(inputfile):
             tx_queue_times.append(time_s)
             tx_queue_length.append(int(logline['length']))
 
-        # elif logline['_type'] == SimLog.LOG_PACKET_DROPPED['type']:
-            # mote_id = logline['_mote_id']
-            # reason = logline['reason']
-            # key = 'packet_dropped_reason'
-            # if key in allstats[run_id][mote_id]:
-                # allstats[run_id][mote_id][key].append(reason)
-            # else:
-                # allstats[run_id][mote_id][key] = [reason]
-            
+        elif logline['_type'] == SimLog.LOG_RPL_CHURN['type']:
+            preferred_parent = logline['preferredParent']
+            churns = allstats[run_id][mote_id]['churns'].append(preferred_parent)
+
+        elif logline['_type'] == SimLog.LOG_PACKET_DROPPED['type'] and mote_id != DAGROOT_ID:
+            reason = logline['reason']
+            key = 'packet_dropped_reasons'
+            allstats[run_id][mote_id][key].append(reason)
 
     # === compute advanced motestats
 
     for (run_id, per_mote_stats) in list(allstats.items()):
         for (mote_id, motestats) in list(per_mote_stats.items()):
             if mote_id != 0:
+                if (motestats['sync_asn'] is not None) and (motestats['charge_asn'] is not None):
+                    # avg_current, lifetime_AA
+                    if (
+                            (motestats['charge'] <= 0)
+                            or
+                            (motestats['charge_asn'] <= motestats['sync_asn'])
+                        ):
+                        motestats['lifetime_AA_years'] = 'N/A'
+                    else:
+                        motestats['avg_current_uA'] = motestats['charge']/float((motestats['charge_asn']-motestats['sync_asn']) * file_settings['tsch_slotDuration'])
+                        assert motestats['avg_current_uA'] > 0
+                        motestats['lifetime_AA_years'] = (BATTERY_AA_CAPACITY_mAh*1000/float(motestats['avg_current_uA']))/(24.0*365)
+
                 if motestats['join_asn'] is not None:
                     # latencies, upstream_num_tx, upstream_num_rx, upstream_num_lost
                     for (appcounter, pktstats) in list(allstats[run_id][mote_id]['upstream_pkts'].items()):
@@ -228,6 +290,8 @@ def kpis_all(inputfile):
         app_packets_lost = 0
         joining_times = []
         us_latencies = []
+        current_consumed = []
+        lifetimes = []
         sixp_transactions = []
         slot_duration = file_settings['tsch_slotDuration']
 
@@ -247,6 +311,15 @@ def kpis_all(inputfile):
 
             # latency
             us_latencies += motestats['latencies']
+
+
+            # current consumed
+            current_consumed.append(motestats['charge'])
+            if motestats['lifetime_AA_years'] is not None:
+                lifetimes.append(motestats['lifetime_AA_years'])
+            current_consumed = [
+                value for value in current_consumed if value is not None
+            ]
 
             # 6P transactions
             mote_sixp_transactions = motestats['sixp_transactions_count']
@@ -366,6 +439,31 @@ def kpis_all(inputfile):
                     )
                 }
             ],
+            'current-consumed': [
+                {
+                    'name': 'Current Consumed',
+                    'unit': 'mA',
+                    'mean': (
+                        mean(current_consumed)
+                        if current_consumed else 'N/A'
+                    ),
+                    '99%': (
+                        np.percentile(current_consumed, 99)
+                        if current_consumed else 'N/A'
+                    )
+                }
+            ],
+            'network_lifetime':[
+                {
+                    'name': 'Network Lifetime',
+                    'unit': 'years',
+                    'min': (
+                        min(lifetimes)
+                        if lifetimes else 'N/A'
+                    ),
+                    'total_capacity_mAh': BATTERY_AA_CAPACITY_mAh,
+                }
+            ],
             'app-packets-sent': [
                 {
                     'name': 'Number of application packets sent',
@@ -408,20 +506,12 @@ def kpis_all(inputfile):
 
 # =========================== main ============================================
 
-def main():
-
-    # FIXME: This logic could be a helper method for other scripts
-    # Identify simData having the latest results. That directory should have
-    # the latest "mtime".
-    subfolders = list(
-        [os.path.join('simData', x) for x in os.listdir('simData')]
-    )
-    subfolder = max(subfolders, key=os.path.getmtime)
-    for infile in glob.glob(os.path.join(subfolder, '*.dat')):
+def main(log_folder: str, start_asn=0, end_asn=sys.maxsize):
+    for infile in glob.glob(os.path.join(log_folder, '*.dat')):
         print('generating KPIs for {0}'.format(infile))
 
         # gather the kpis
-        kpis = kpis_all(infile)
+        kpis = kpis_all(infile, start_asn, end_asn)
 
         # print on the terminal
         print(json.dumps(kpis, indent=4))
@@ -433,4 +523,4 @@ def main():
         print('KPIs saved in {0}'.format(outfile))
 
 if __name__ == '__main__':
-    main()
+    argh.dispatch_command(main)
