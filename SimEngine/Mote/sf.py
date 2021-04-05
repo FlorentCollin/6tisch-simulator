@@ -1381,6 +1381,7 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
         super(SchedulingFunctionOTF, self).__init__(mote)
 
         self.numCellsUsed = 0
+        self.numCellsElapsed = 0
         self.numCellsAvg = -1
         self.locked_slots = set()
         self.retry_count = {}
@@ -1408,13 +1409,12 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
         """
         [from TSCH] just passed a dedicated TX cell. used=False means we didn't use it.
         """
+        self.numCellsElapsed += 1
         if sent_packet and sent_packet["type"] == "DATA":
             self.numCellsUsed += 1
 
     def indication_rx_cell_elapsed(self, cell, received_packet):
-        return # @incomplete current try
-        if received_packet and received_packet["type"] == "DATA":
-            self.numCellsUsed += 1
+        pass # @incomplete
 
     def indication_parent_change(self, old_parent, new_parent):
         """
@@ -1423,6 +1423,7 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
 
         if old_parent:
             self._clear_cells(old_parent)
+            self.numCellsElapsed = 0
             self.numCellsUsed = 0
             self.numCellsAvg = -1
         # @incomplete create 6p transaction to request 
@@ -1454,6 +1455,10 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
     def clear_to_send_EBs_DATA(self):
         return True # @incomplete
 
+    def _reset_cells_counters(self):
+        self.numCellsUsed = 0
+        self.numCellsElapsed = 0
+
     def _schedule_allocation_housekeeping(self):
         self.engine.scheduleIn(
             delay          = d.OTF_HOUSEKEEPING_PERIOD * (0.9+ 0.2*random.random()),
@@ -1469,7 +1474,7 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
         with self.mote.dataLock:
             # if node does not have parent, or has not joined or is not sync, do not perform OTF
             if not self.mote.rpl.getPreferredParent() or not self.mote.secjoin.getIsJoined() or not self.mote.tsch.isSync:
-                self.numCellsUsed = 0
+                self._reset_cells_counters()
                 self._schedule_allocation_housekeeping()
                 return
 
@@ -1479,7 +1484,7 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
                                    + self.numCellsAvg * (1 - d.OTF_TRAFFIC_SMOOTHING))
             else:
                 self.numCellsAvg = self.numCellsUsed
-            self.numCellsUsed = 0
+            self._reset_cells_counters()
 
             parent = self.mote.rpl.getPreferredParent()
             if self.retry_count[parent] != -1:
@@ -1542,29 +1547,21 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
             self._schedule_allocation_housekeeping()
 
     def _estimateETX(self, neighbor):
-        def pdr(cell):
-            assert cell.num_tx > 0
-            return cell.num_tx_ack / float(cell.num_tx)
-
-        # collect TX cells which has enough numTX
         tx_cell_list = [cell for cell in
                         self.mote.tsch.get_cells(neighbor, self.SLOTFRAME_OTF_HANDLE)
-                        if cell.options == [d.CELLOPTION_TX] and cell.num_tx >= d.MSF_MIN_NUM_TX]
+                        if cell.options == [d.CELLOPTION_TX]]
         if not tx_cell_list:
-            return 1
-        # set initial values for numTx and numTxAck assuming PDR is exactly estimated
-        pdr      = sum(pdr(cell) for cell in tx_cell_list) / len(tx_cell_list)
-        numTx    = self.NUM_SUFFICIENT_TX # 10 ?
-        numTxAck = math.floor(pdr*numTx)
+            return 1.0
 
+        numTx = 0
+        numTxAck = 0
         for cell in tx_cell_list:
             numTx    += cell.num_tx
             numTxAck += cell.num_tx_ack
 
         # abort if about to divide by 0
-        assert(numTxAck)
         if not numTxAck:
-            return
+            return 0.0
 
         # calculate ETX
         return float(numTx)/float(numTxAck)
@@ -2248,7 +2245,7 @@ class SchedulingFunctionEOTF(SchedulingFunctionOTF):
         with self.mote.dataLock:
             # if node does not have parent, or has not joined or is not sync, do not perform OTF
             if not self.mote.rpl.getPreferredParent() or not self.mote.secjoin.getIsJoined() or not self.mote.tsch.isSync:
-                self.numCellsUsed = 0
+                self._reset_cells_counters()
                 self._schedule_allocation_housekeeping()
                 return
 
@@ -2258,7 +2255,7 @@ class SchedulingFunctionEOTF(SchedulingFunctionOTF):
             if self.numCellsAvg < 0:
                 self.numCellsAvg = self.numCellsUsed
                 self.queueOccupancyAvg = len(self.mote.tsch.txQueue) / self.settings.tsch_tx_queue_size
-                self.cellsUtilizationAvg = self._cellsUtilization()
+                self.cellsUtilizationAvg = self.numCellsUsed / max(1, self.numCellsElapsed)
             else:
                 self.numCellsAvg = (self.numCellsUsed * d.EOTF_TRAFFIC_SMOOTHING
                                    + self.numCellsAvg * (1 - d.EOTF_TRAFFIC_SMOOTHING))
@@ -2267,11 +2264,10 @@ class SchedulingFunctionEOTF(SchedulingFunctionOTF):
                 self.queueOccupancyAvg = (nowQueueSize * d.EOTF_TRAFFIC_SMOOTHING
                                           + self.queueOccupancyAvg * (1 - d.EOTF_TRAFFIC_SMOOTHING))
 
-                self.cellsUtilizationAvg = (self._cellsUtilization() * d.EOTF_TRAFFIC_SMOOTHING
+                self.cellsUtilizationAvg = (self.numCellsUsed / max(1, self.numCellsElapsed) * d.EOTF_TRAFFIC_SMOOTHING
                                             + self.cellsUtilizationAvg * (1 - d.EOTF_TRAFFIC_SMOOTHING))
 
-            # reset counters
-            self.numCellsUsed = 0
+            self._reset_cells_counters()
 
             if self.retry_count[parent] != -1:
                 # middle of a 6P transaction
@@ -2285,6 +2281,7 @@ class SchedulingFunctionEOTF(SchedulingFunctionOTF):
 
             # calculate required number of cells to that parent
             etx = self._estimateETX(parent)
+            print(etx)
             self.RPL_MAX_ETX = 4.0 # @incomplete: update that in RPL or somewhere else and wtf is this number
             if etx > self.RPL_MAX_ETX:
                 etx = self.RPL_MAX_ETX
@@ -2296,7 +2293,6 @@ class SchedulingFunctionEOTF(SchedulingFunctionOTF):
             congestionBonus = threshold
             beta = 0.80
             alpha = 0.20
-
 
             # measure how many cells I have now to that parent
             otf_slotframe = self.mote.tsch.slotframes[self.SLOTFRAME_OTF_HANDLE]
@@ -2344,14 +2340,3 @@ class SchedulingFunctionEOTF(SchedulingFunctionOTF):
 
             # schedule next housekeeping
             self._schedule_allocation_housekeeping()
-
-    def _cellsUtilization(self):
-        slotframe = self.mote.tsch.get_slotframe(self.SLOTFRAME_OTF_HANDLE)
-        parent = self.mote.rpl.getPreferredParent()
-        if not parent:
-            return 0
-        txCells = slotframe.get_cells_filtered(parent, [d.CELLOPTION_TX])
-        if not txCells:
-            return 0
-
-        return self.numCellsUsed / len(txCells)

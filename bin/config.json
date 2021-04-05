@@ -2,7 +2,7 @@
     "version":                                             0,
     "execution": {
         "numCPUs":                                         3,
-        "numRuns":                                         20
+        "numRuns":                                         30
     },
     "settings": {
         "combination": {
@@ -16,7 +16,7 @@
             "secjoin_enabled":                             true,
 
             "app":                                         "AppPeriodic",
-            "app_pkPeriod":                                0.50,
+            "app_pkPeriod":                                1,
             "app_pkPeriodVar":                             0,
             "app_pkLength":                                30,
             "app_burstTimestamp":                          null,
@@ -35,6 +35,7 @@
             "tsch_max_payload_len":                        90,
 
             "sf_class":                                    "MSF",
+            "sixp_transaction_timeout":                    50,
 
             "tsch_slotDuration":                           0.010,
             "tsch_slotframeLength":                        101,
@@ -62,9 +63,7 @@
             "motes_eui64":                                 []
         }
     },
-    "logging":                                             ["tsch.synced", "secjoin.joined", "app.rx", "app.tx", "tsch.add_cell", "tsch.delete_cell", "sixp.comp"] ,
+    "logging":                                             ["tsch.synced", "secjoin.joined", "app.rx", "app.tx", "tsch.add_cell", "tsch.delete_cell", "sixp.comp", "sixp.timeout", "mac.add_addr"] ,
     "log_directory_name":                                  "sf_class",
-    "post": [
-        "python compute.py"
-    ]
+    "post": []
 }

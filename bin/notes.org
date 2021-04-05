@@ -1,5 +1,5 @@
-#+title:Preliminary Analysis of MSF, OTF and E-OTF
-#+author:Florent Collin
+#+title: Preliminary Analysis of MSF, OTF and E-OTF
+#+author: Florent Collin
 
 #+STARTUP: hideblocks inlineimages
 #+SETUPFILE: https://fniessen.github.io/org-html-themes/org/theme-readtheorg.setup
