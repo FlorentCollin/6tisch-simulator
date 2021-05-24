@@ -1,7 +1,7 @@
+import os
 import json
 import seaborn as sns
 import pandas as pd
-import numpy as np
 from dataclasses import dataclass
 from typing import Dict, List
 
@@ -10,7 +10,7 @@ sns.set_theme(style="whitegrid")
 @dataclass
 class Stats:
     sf_name: str
-    motes_stats: [Dict]
+    motes_stats: List[Dict]
     # mote_addr: Dict
     # addr_mote: Dict
     global_stats: List[Dict]
@@ -206,8 +206,9 @@ def load_stats_from_filepath(filepath):
     with open(filepath) as f:
         return json.load(f)
 
-def load_stats(sf_names: List[str], data_dir, num_motes):
-    data_files = (f'{data_dir}/{sf_name}/exec_numMotes_{num_motes}.dat.kpi' for sf_name in sf_names)
+def load_stats(sf_names: List[str], data_dir, start_asn=0, end_asn=None):
+    filename = f'stats-{start_asn}-{end_asn}.json' if end_asn else f'stats-{start_asn}.json'
+    data_files = (os.path.join(data_dir, sf_name, filename) for sf_name in sf_names)
     stats_raw = (load_stats_from_filepath(filepath) for filepath in data_files)
     return [create_stats(x) for x in stats_raw]
 

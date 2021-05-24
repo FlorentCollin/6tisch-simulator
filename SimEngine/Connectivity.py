@@ -614,6 +614,36 @@ class ConnectivityMatrixLinear(ConnectivityMatrixBase):
                     )
             parent_id = child_id
 
+class ConnectivityMatrixTree(ConnectivityMatrixBase):
+    """
+    Tree toplogy where each mote has 2 children except for the leaf motes
+    """
+
+    def _additional_initialization(self):
+        perfect_pdr = self.LINK_PERFECT[u'pdr']
+        perfect_rssi = self.LINK_PERFECT[u'rssi']
+
+        assert len(self.mote_id_list) >= 1
+        for i, child_id in enumerate(self.mote_id_list[1:], start=1):
+            # Get the parent_id based on the index of the current mote.
+            # The index corresponding to the parent of a mote in a binary tree
+            # is given by the formula (i-1)//2
+            parent_id = self.mote_id_list[(i-1)//2]
+            for channel in d.TSCH_HOPPING_SEQUENCE[:self.num_channels]:
+                self.set_pdr_both_directions(
+                    child_id,
+                    parent_id,
+                    channel,
+                    perfect_pdr
+                )
+                self.set_rssi_both_directions(
+                    child_id,
+                    parent_id,
+                    channel,
+                    perfect_rssi
+                )
+
+
 
 class ConnectivityMatrixK7(ConnectivityMatrixBase):
     """

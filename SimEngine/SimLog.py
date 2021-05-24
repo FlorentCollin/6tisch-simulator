@@ -72,12 +72,17 @@ LOG_MSF_TX_CELL_UTILIZATION       = {u'type': u'msf.tx_cell_utilization',   u'ke
 LOG_MSF_RX_CELL_UTILIZATION       = {u'type': u'msf.rx_cell_utilization',   u'keys': [u'_mote_id',u'neighbor',u'value']}
 LOG_MSF_ERROR_SCHEDULE_FULL       = {u'type': u'msf.error.schedule_full',   u'keys': [u'_mote_id']}
 
+# === EOTF
+LOG_EOTF_CONGESTION_BONUS_ADD     = {u'type': u'eotf.congestion_bonus_add', u'keys': [u'_mote_id']}
+LOG_EOTF_CONGESTION_BONUS_DEL     = {u'type': u'eotf.congestion_bonus_del', u'keys': [u'_mote_id']}
+
 # === sixp
 LOG_SIXP_TX                       = {u'type': u'sixp.tx',                   u'keys': [u'_mote_id',u'packet']}
 LOG_SIXP_RX                       = {u'type': u'sixp.rx',                   u'keys': [u'_mote_id',u'packet']}
 LOG_SIXP_TRANSACTION_COMPLETED    = {u'type': u'sixp.comp',                 u'keys': [u'_mote_id',u'peerMac',u'seqNum', u'cmd']}
 LOG_SIXP_TRANSACTION_TIMEOUT      = {u'type': u'sixp.timeout',              u'keys': [u'_mote_id',u'srcMac',u'dstMac',u'seqNum', u'cmd']}
 LOG_SIXP_TRANSACTION_ABORTED      = {u'type': u'sixp.abort',                u'keys': [u'_mote_id',u'srcMac',u'dstMac',u'seqNum', u'cmd']}
+LOG_SIXP_TRANSACTION_ERROR        = {u'type': u'sixp.error',                u'keys': [u'_mote_id',u'neighbor']}
 
 # === tsch
 LOG_TSCH_SYNCED                   = {u'type': u'tsch.synced',               u'keys': [u'_mote_id']}

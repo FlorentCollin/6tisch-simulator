@@ -1,8 +1,8 @@
 {
     "version":                                             0,
     "execution": {
-        "numCPUs":                                         3,
-        "numRuns":                                         30
+        "numCPUs":                                         7,
+        "numRuns":                                         40
     },
     "settings": {
         "combination": {
@@ -16,13 +16,13 @@
             "secjoin_enabled":                             true,
 
             "app":                                         "AppPeriodic",
-            "app_pkPeriod":                                1,
+            "app_pkPeriod":                                0.125,
             "app_pkPeriodVar":                             0,
             "app_pkLength":                                30,
             "app_burstTimestamp":                          null,
             "app_burstNumPackets":                         0,
-            "app_startSending":                            2700,
-            "app_stopSending":                             6300,
+            "app_startSending":                            3300,
+            "app_stopSending":                             6900,
 
             "rpl_of":                                      "OF0",
             "rpl_daoPeriod":                               60,
@@ -49,7 +49,7 @@
 
             "radio_stats_log_period_s":                    60,
 
-            "conn_class":                                  "Linear",
+            "conn_class":                                  "Tree",
             "conn_simulate_ack_drop":                      true,
 
             "conn_trace":                                  null,
@@ -63,7 +63,7 @@
             "motes_eui64":                                 []
         }
     },
-    "logging":                                             ["tsch.synced", "secjoin.joined", "app.rx", "app.tx", "tsch.add_cell", "tsch.delete_cell", "sixp.comp", "sixp.timeout", "mac.add_addr"] ,
+    "logging":                                             ["tsch.synced", "secjoin.joined", "app.rx", "app.tx", "tsch.add_cell", "tsch.delete_cell", "sixp.comp", "sixp.timeout", "mac.add_addr", "eotf.congestion_bonus_add", "eotf.congestion_bonus_del", "ipv6.add_addr", "sixp.abort", "sixp.tiemout", "sixp.error"],
     "log_directory_name":                                  "sf_class",
     "post": []
 }

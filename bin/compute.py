@@ -44,6 +44,7 @@ def mean(numbers):
 def init_mote():
     return {
         'mac_addr': None,
+        'ipv6_addr': None,
         'upstream_num_tx': 0,
         'upstream_num_rx': 0,
         'upstream_num_lost': 0,
@@ -61,7 +62,10 @@ def init_mote():
         'scheduled_cells_count': [],
         'sixp_transactions_times': [],
         'sixp_transactions_count': [],
+        'sixp_transactions_error_times': [],
         'packet_dropped_reasons': [],
+        'eotf_congestion_bonus_add': [],
+        'eotf_congestion_bonus_del': [],
         'hops': [],
         'churns': [],
         'charge': None,
@@ -91,7 +95,7 @@ def kpis_all(inputfile, start_asn=0, end_asn=sys.maxsize):
         # shorthands
         run_id = logline['_run_id']
         if '_asn' in logline: # TODO this should be enforced in each line
-            asn = logline['_asn']
+            asn = logline['_asn'] - start_asn
         if '_mote_id' in logline: # TODO this should be enforced in each line
             mote_id = logline['_mote_id']
 
@@ -121,6 +125,9 @@ def kpis_all(inputfile, start_asn=0, end_asn=sys.maxsize):
         elif logline['_type'] == SimLog.LOG_MAC_ADD_ADDR['type']:
             allstats[run_id][mote_id]['mac_addr'] = logline['addr']
 
+        elif logline['_type'] == SimLog.LOG_IPV6_ADD_ADDR['type']:
+            allstats[run_id][mote_id]['ipv6_addr'] = logline['addr']
+
         elif logline['_type'] == SimLog.LOG_SECJOIN_JOINED['type']:
             # joined
 
@@ -147,9 +154,7 @@ def kpis_all(inputfile, start_asn=0, end_asn=sys.maxsize):
             allstats[run_id][mote_id]['scheduled_cells'] -= 1
 
         # ASN SPECIFIC LOGS
-        if asn < start_asn:
-            continue
-        if asn > end_asn:
+        if asn < 0 or asn > end_asn - start_asn:
             continue
 
         if logline['_type'] == SimLog.LOG_APP_TX['type']:
@@ -157,6 +162,7 @@ def kpis_all(inputfile, start_asn=0, end_asn=sys.maxsize):
 
             # shorthands
             mote_id    = logline['_mote_id']
+            srcIp      = logline['packet']['net']['srcIp']
             dstIp      = logline['packet']['net']['dstIp']
             appcounter = logline['packet']['app']['appcounter']
 
@@ -169,6 +175,7 @@ def kpis_all(inputfile, start_asn=0, end_asn=sys.maxsize):
             if appcounter not in allstats[run_id][mote_id]['upstream_pkts']:
                 allstats[run_id][mote_id]['upstream_pkts'][appcounter] = {
                     'hops': 0,
+                    'srcIp': srcIp
                 }
 
             allstats[run_id][mote_id]['upstream_pkts'][appcounter]['tx_asn'] = asn
@@ -228,6 +235,11 @@ def kpis_all(inputfile, start_asn=0, end_asn=sys.maxsize):
             sixp_transactions_times.append(time_s)
             sixp_transactions_count.append(count_transactions)
 
+        elif logline['_type'] == SimLog.LOG_SIXP_TRANSACTION_ERROR['type'] and mote_id != DAGROOT_ID:
+            sixp_transactions_times = allstats[run_id][mote_id]['sixp_transactions_error_times']
+            time_s = asn * file_settings['tsch_slotDuration']
+            sixp_transactions_times.append(time_s)
+
         elif logline['_type'] == SimLog.LOG_TSCH_TXQUEUE_LENGTH['type'] and mote_id != DAGROOT_ID:
             tx_queue_times  = allstats[run_id][mote_id]['tx_queue_times']
             tx_queue_length = allstats[run_id][mote_id]['tx_queue_length']
@@ -243,6 +255,16 @@ def kpis_all(inputfile, start_asn=0, end_asn=sys.maxsize):
             reason = logline['reason']
             key = 'packet_dropped_reasons'
             allstats[run_id][mote_id][key].append(reason)
+
+        elif logline['_type'] == SimLog.LOG_EOTF_CONGESTION_BONUS_ADD['type'] and mote_id != DAGROOT_ID:
+            key = 'eotf_congestion_bonus_add'
+            time_s = asn * file_settings['tsch_slotDuration']
+            allstats[run_id][mote_id][key].append(time_s)
+
+        elif logline['_type'] == SimLog.LOG_EOTF_CONGESTION_BONUS_DEL['type'] and mote_id != DAGROOT_ID:
+            key = 'eotf_congestion_bonus_del'
+            time_s = asn * file_settings['tsch_slotDuration']
+            allstats[run_id][mote_id][key].append(time_s)
 
     # === compute advanced motestats
 
@@ -501,6 +523,8 @@ def kpis_all(inputfile, start_asn=0, end_asn=sys.maxsize):
                 del motestats['join_asn']
             if 'latencies' in motestats:
                 del motestats['latencies']
+            if 'latencies_mote' in motestats:
+                del motestats['latencies_mote']
 
     return allstats
 
@@ -513,12 +537,12 @@ def main(log_folder: str, start_asn=0, end_asn=sys.maxsize):
         # gather the kpis
         kpis = kpis_all(infile, start_asn, end_asn)
 
-        # print on the terminal
-        print(json.dumps(kpis, indent=4))
-
         # add to the data folder
-        outfile = '{0}.kpi'.format(infile)
-        with open(outfile, 'w') as f:
+        if end_asn == sys.maxsize:
+            outfile = 'stats-{0}.json'.format(start_asn)
+        else:
+            outfile = 'stats-{0}-{1}.json'.format(start_asn, end_asn)
+        with open(os.path.join(log_folder, outfile), 'w') as f:
             f.write(json.dumps(kpis, indent=4))
         print('KPIs saved in {0}'.format(outfile))
 

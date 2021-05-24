@@ -243,14 +243,14 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
               ):
             if (received_packet is None
                 or
-                received_packet[u'mac'][u'srcMac'] == preferred_parent
-                ):
+                ('mac' in received_packet and received_packet[u'mac'][u'srcMac'] == preferred_parent)):
                 if not self.get_negotiated_rx_cells(preferred_parent):
                     self._handle_rx_cell_elapsed_event(bool(received_packet))
                 else:
                     # ignore this notification
                     pass
-            elif (self.get_negotiated_rx_cells(received_packet[u'mac'][u'srcMac'])):
+            elif ('mac' in received_packet
+                  and self.get_negotiated_rx_cells(received_packet[u'mac'][u'srcMac'])):
                 self._handle_rx_cell_elapsed_event(False)
                 assert cell.options == [d.CELLOPTION_RX]
                 # we received a packet on our autonomous RX cell, with the
@@ -941,6 +941,12 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
             code      = d.SIXP_RC_ERR
             cell_list = None
             callback  = None
+            self.log(SimEngine.SimLog.LOG_SIXP_TRANSACTION_ERROR,
+                    {
+                        u'_mote_id'    : self.mote.id,
+                        u'neighbor'    : self.mote.rpl.getPreferredParent()
+                    })
+
 
         # send a response
         self.mote.sixp.send_response(
@@ -1096,6 +1102,11 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
             code      = d.SIXP_RC_ERR
             cell_list = None
             callback  = None
+            self.log(SimEngine.SimLog.LOG_SIXP_TRANSACTION_ERROR,
+                    {
+                        u'_mote_id'    : self.mote.id,
+                        u'neighbor'    : self.mote.rpl.getPreferredParent()
+                    })
 
         # send the response
         self.mote.sixp.send_response(
@@ -1285,7 +1296,10 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
 
             code = d.SIXP_RC_SUCCESS
             cell_list = []
-            if available_slots:
+            # @incomplete fix a bug when the number of packet send
+            # by the app is high (order of 10 pkt/s) but I dont't know
+            # if this fix is correct or not
+            if available_slots and num_cells <= len(available_slots):
                 # prepare response
                 selected_slots = random.sample(available_slots, num_cells)
                 for cell in candidate_cells:
@@ -1313,6 +1327,11 @@ class SchedulingFunctionMSF(SchedulingFunctionBase):
             code      = d.SIXP_RC_ERR
             cell_list = None
             callback  = None
+            self.log(SimEngine.SimLog.LOG_SIXP_TRANSACTION_ERROR,
+                    {
+                        u'_mote_id'    : self.mote.id,
+                        u'neighbor'    : self.mote.rpl.getPreferredParent()
+                    })
 
         # send a response
         self.mote.sixp.send_response(
@@ -1834,6 +1853,11 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
             code      = d.SIXP_RC_ERR
             cell_list = None
             callback  = None
+            self.log(SimEngine.SimLog.LOG_SIXP_TRANSACTION_ERROR,
+                    {
+                        u'_mote_id'    : self.mote.id,
+                        u'neighbor'    : self.mote.rpl.getPreferredParent()
+                    })
 
         # send a response
         self.mote.sixp.send_response(
@@ -1990,6 +2014,11 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
             code      = d.SIXP_RC_ERR
             cell_list = None
             callback  = None
+            self.log(SimEngine.SimLog.LOG_SIXP_TRANSACTION_ERROR,
+                    {
+                        u'_mote_id'    : self.mote.id,
+                        u'neighbor'    : self.mote.rpl.getPreferredParent()
+                    })
 
         # send the response
         self.mote.sixp.send_response(
@@ -2207,6 +2236,11 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
             code      = d.SIXP_RC_ERR
             cell_list = None
             callback  = None
+            self.log(SimEngine.SimLog.LOG_SIXP_TRANSACTION_ERROR,
+                    {
+                        u'_mote_id'    : self.mote.id,
+                        u'neighbor'    : self.mote.rpl.getPreferredParent()
+                    })
 
         # send a response
         self.mote.sixp.send_response(
@@ -2281,7 +2315,6 @@ class SchedulingFunctionEOTF(SchedulingFunctionOTF):
 
             # calculate required number of cells to that parent
             etx = self._estimateETX(parent)
-            print(etx)
             self.RPL_MAX_ETX = 4.0 # @incomplete: update that in RPL or somewhere else and wtf is this number
             if etx > self.RPL_MAX_ETX:
                 etx = self.RPL_MAX_ETX
@@ -2301,16 +2334,19 @@ class SchedulingFunctionEOTF(SchedulingFunctionOTF):
             deltaCells = 0
             if self.queueOccupancyAvg > beta:
                 deltaCells = congestionBonus
-                # print("--- ADD CONGESTION BONUS")
-            elif reqCells > nowCells:
-                deltaCells = reqCells - nowCells + math.ceil(threshold / 2)
+                self.log(SimEngine.SimLog.LOG_EOTF_CONGESTION_BONUS_ADD,
+                        { u'_mote_id'    : self.mote.id })
+            if reqCells > nowCells:
+                deltaCells += reqCells - nowCells + math.ceil(threshold / 2)
                 # print("--- NORMAL ADD")
             elif reqCells < nowCells - threshold:
                 if self.cellsUtilizationAvg > alpha:
-                    # print("--- DEL CONGESTION BONUS")
+                    self.log(SimEngine.SimLog.LOG_EOTF_CONGESTION_BONUS_DEL,
+                            { u'_mote_id'    : self.mote.id })
                     deltaCells = -congestionBonus
                 else:
                     deltaCells = -(nowCells - reqCells - math.floor(threshold / 2))
+                    print("-------normal dell", deltaCells)
                     # print("--- NORMAL DEL")
             if nowCells == 0 and deltaCells == 0:
                 deltaCells = 1
@@ -2336,6 +2372,13 @@ class SchedulingFunctionEOTF(SchedulingFunctionOTF):
                     neighbor     = parent,
                     num_cells    = -deltaCells,
                     cell_options = self.TX_CELL_OPT
+                )
+
+            if deltaCells > 0:
+                self.retry_count[parent] = 0
+                self._request_adding_cells(
+                    neighbor     = parent,
+                    num_tx_cells = deltaCells
                 )
 
             # schedule next housekeeping
