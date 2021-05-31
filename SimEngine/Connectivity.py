@@ -628,6 +628,8 @@ class ConnectivityMatrixTree(ConnectivityMatrixBase):
             # Get the parent_id based on the index of the current mote.
             # The index corresponding to the parent of a mote in a binary tree
             # is given by the formula (i-1)//2
+            # This formula is easily generalizable for tree with more children 
+            # by node
             parent_id = self.mote_id_list[(i-1)//2]
             for channel in d.TSCH_HOPPING_SEQUENCE[:self.num_channels]:
                 self.set_pdr_both_directions(
@@ -642,8 +644,6 @@ class ConnectivityMatrixTree(ConnectivityMatrixBase):
                     channel,
                     perfect_rssi
                 )
-
-
 
 class ConnectivityMatrixK7(ConnectivityMatrixBase):
     """

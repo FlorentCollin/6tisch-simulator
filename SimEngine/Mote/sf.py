@@ -1529,8 +1529,6 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
             otf_slotframe = self.mote.tsch.slotframes[self.SLOTFRAME_OTF_HANDLE]
             nowCells = len(otf_slotframe.get_cells_filtered(parent, self.TX_CELL_OPT))
 
-            # print(f"nowCells: {nowCells}, reqCells: {reqCells}")
-
             if nowCells == 0 or nowCells < reqCells:
                 # I don't have enough cells, calculate how many to add
                 if reqCells > 0:
@@ -1540,7 +1538,6 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
                     # but at least one cell
                     numCellsToAdd = 1
 
-                # print(f"[otf] not enough cells to {parent}: have {nowCells}, need {reqCells}, add {numCellsToAdd}")
                 self.retry_count[parent] = 0
                 self._request_adding_cells(
                     neighbor     = parent,
@@ -1549,12 +1546,11 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
             elif reqCells < nowCells - threshold:
                 # I have too many cells, calculate how many to remove
                 numCellsToRemove = nowCells - reqCells - math.floor(threshold / 2)
-                if nowCells - numCellsToRemove == 0: #I want always there is at least 1 cell available
+                if nowCells - numCellsToRemove == 0:
                     numCellsToRemove = 0
 
-                # have 6top remove cells
+                # Trigger 6top transaction to remove cells
                 if numCellsToRemove > 0:
-                    #print(f"[otf] [{self.mote.get_mac_addr()}]too many cells to {parent}: have {nowCells}, need {reqCells}, remove {numCellsToRemove}")
                     self.retry_count[parent] = 0
                     self._request_deleting_cells(
                         neighbor     = parent,
@@ -1562,7 +1558,6 @@ class SchedulingFunctionOTF(SchedulingFunctionBase):
                         cell_options = self.TX_CELL_OPT
                     )
 
-            # schedule next housekeeping
             self._schedule_allocation_housekeeping()
 
     def _estimateETX(self, neighbor):
@@ -2315,13 +2310,12 @@ class SchedulingFunctionEOTF(SchedulingFunctionOTF):
 
             # calculate required number of cells to that parent
             etx = self._estimateETX(parent)
-            self.RPL_MAX_ETX = 4.0 # @incomplete: update that in RPL or somewhere else and wtf is this number
+            self.RPL_MAX_ETX = 4.0 # @incomplete: update that in RPL or somewhere else
             if etx > self.RPL_MAX_ETX:
                 etx = self.RPL_MAX_ETX
 
             reqCells = int(math.ceil(genTraffic * etx))
 
-            # @incomplete define constants update settings file
             threshold = d.EOTF_THRESHOLD
             congestionBonus = threshold
             beta = 0.80
@@ -2338,7 +2332,6 @@ class SchedulingFunctionEOTF(SchedulingFunctionOTF):
                         { u'_mote_id'    : self.mote.id })
             if reqCells > nowCells:
                 deltaCells += reqCells - nowCells + math.ceil(threshold / 2)
-                # print("--- NORMAL ADD")
             elif reqCells < nowCells - threshold:
                 if self.cellsUtilizationAvg > alpha:
                     self.log(SimEngine.SimLog.LOG_EOTF_CONGESTION_BONUS_DEL,
@@ -2346,27 +2339,18 @@ class SchedulingFunctionEOTF(SchedulingFunctionOTF):
                     deltaCells = -congestionBonus
                 else:
                     deltaCells = -(nowCells - reqCells - math.floor(threshold / 2))
-                    print("-------normal dell", deltaCells)
-                    # print("--- NORMAL DEL")
             if nowCells == 0 and deltaCells == 0:
                 deltaCells = 1
 
             deltaCells = int(deltaCells) # @incomplete fix weird behavior in python2.7
 
-            if deltaCells != 0:
-                pass
-                # print("queueOcc" , self.queueOccupancyAvg)
-                # print("numCells" , self.numCellsAvg)
-                # print("cellsUtili" , self.cellsUtilizationAvg)
             if deltaCells > 0:
-                # print(f"[e-otf] {self.mote.get_mac_addr()} not enough cells to {parent}: have {nowCells}, need {reqCells}, add {deltaCells}")
                 self.retry_count[parent] = 0
                 self._request_adding_cells(
                     neighbor     = parent,
                     num_tx_cells = deltaCells
                 )
             if deltaCells < 0:
-                # print(f"[e-otf] {self.mote.get_mac_addr()} too many cells to {parent}: have {nowCells}, need {reqCells}, remove {deltaCells}")
                 self.retry_count[parent] = 0
                 self._request_deleting_cells(
                     neighbor     = parent,

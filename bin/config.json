@@ -16,7 +16,7 @@
             "secjoin_enabled":                             true,
 
             "app":                                         "AppPeriodic",
-            "app_pkPeriod":                                0.125,
+            "app_pkPeriod":                                0.5,
             "app_pkPeriodVar":                             0,
             "app_pkLength":                                30,
             "app_burstTimestamp":                          null,
@@ -49,7 +49,7 @@
 
             "radio_stats_log_period_s":                    60,
 
-            "conn_class":                                  "Tree",
+            "conn_class":                                  "Linear",
             "conn_simulate_ack_drop":                      true,
 
             "conn_trace":                                  null,
